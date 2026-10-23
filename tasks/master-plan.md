@@ -4,7 +4,7 @@
 
 ## Objective
 
-**Learn how best to build on MCP's core, its extensions API and SEP-3415, toward a specification in which an MCP client subscribes to a resource, or a collection of them, with a webhook URL, and from then on the server POSTs to that URL whenever one of them changes, carrying the resource's latest version, a patch to get to the latest version, or a notification that the resource has changed.**
+**Learn how best to build on MCP's core, its extensions API and SEP-3415, toward a specification in which an MCP client subscribes to some state (a resource), or a collection of them, with a webhook URL, and from then on the server POSTs to that webhook whenever one of them changes, carrying the resource's latest version, a patch to get to the latest version, or a notification that the resource has changed.**
 
 "Best" in the sentence above is a weighted value judgement, trading off technical feasibility, implementation elegance, and political viability to a potential sponsor, the core committee, and the MCP community at large.
 
@@ -12,7 +12,7 @@
 
 ## Context
 
-### Timing and politics
+### Timing and political considerations
 
 - **Peter expects watching state to need an API of its own.** Replying to Larry on the SEP-3415 thread on 2026-10-16, he wrote that watching state and consuming messages "will need different handling and different APIs", while likely sharing much of the same machinery.
 - **Peter prefers extending an existing mechanism to adding a parallel one.** Asked on 2026-10-23 whether Events could move its notifications to a method of its own, `events/listen`, he called that "unnecessarily messy and inconsistent", and asked instead that SEP-3371 let extensions add to `subscriptions/listen`. This extension's `resources/webhooks/subscribe` sits beside `events/subscribe` in the same way, so the preference counts for the flavor that extends Events when the drafts are compared. It is no reason to change course now, since the standalone flavor is the easiest to build first.
@@ -20,7 +20,7 @@
 - **SEP-3415 takes nothing new while its vote is pending.** Peter, in Discord on 2026-10-20: it is already judged big. The core maintainers may ask for changes after their review, which could give us another chance to comment on SEP-3415 itself.
 - **Meanwhile, we start engaging the working group with a PR of a document, not code,** to `modelcontextprotocol/experimental-ext-triggers-events`, opened once this prototype has taught us enough, so the group can comment on what we learned. A SEP follows it.
 - **An Extensions Track SEP needs a reference implementation in an official SDK before review** (SEP-2133). This prototype is independent of the SDK, so that implementation comes later, probably built on Peter's TypeScript Events work.
-- **This is one of three possible flavors.** The other two, extending Events and amending it, may follow, and the drafts are compared before one is chosen. The predecessor, `../mcp-events-prototype`, designed a state contract over Events' own methods, and its task files are this repo's mining source.
+- **This is one of three possible flavors that we've identified so far.** The other two, extending Events and amending it, may follow, and the drafts are compared before one is recommended. The predecessor, `../mcp-events-prototype`, designed a state contract over Events' own methods, and its task files are this repo's mining source.
 
 ### Technical
 
@@ -72,7 +72,7 @@ The predecessor, `../mcp-events-prototype`, never got as far as code, only desig
 
 - **Level 1, the floor, is `notify` over Events, as Open Question 2 sketches it.** It uses SEP-3415's own methods and an event type named `mcp.resource.updated`, and adds nothing to either. It needs nothing from `sep-notes.md`.
 - **Level 2 is resource state sync, in this extension's own methods.** It keeps the cast, the gateway and SEP-3415's webhook rules, and changes what a delivery carries and how a subscriber catches up. Every requirement in `sep-notes.md` is for this level.
-- **The demo runs them in that order,** so the second is always seen against the first.
+- **The demo runs them in that order,** so the second is always seen against the first. Between them, the page's Wipe button empties A, B and `b`, so level 2 starts from a clean slate, with nothing carried over from level 1 (Larry, 2026-10-23).
 
 ### The cast
 
@@ -107,7 +107,8 @@ block-beta
   - **SEP-3415 calls this party a gateway,** in its Appendix A, where the SDK "registers it … with the gateway", and calls the deployment a forward proxy. Lumenize's Gateway also carries a client's calls up to the nodes. This one carries only deliveries down, since `b` calls A itself.
   - **Nothing in B knows about notes,** and the same gateway serves both levels, since an Events occurrence and a level-2 change arrive with the same headers, signatures and verification.
 - **`b` is an MCP client of A that cannot receive a webhook,** as Claude Code on a laptop or a browser tab cannot. It holds the token, subscribes, refreshes, and keeps a copy of each resource it watches, at A's version. It can be a script in the early phases, but for the demo it runs in the browser, so its own messages are recorded where the demo shows them.
-- **The demo shows every message, and what each party holds.** `a` and `b` run in the browser, so their records are local to the page. A and B run on Cloudflare, so they report their contents and the messages they send and receive to the page.
+- **The demo shows every message, and what each party holds.** `a` and `b` run in the browser, so their records are local to the page. A and B run on Cloudflare, so they report their contents and the messages they send and receive to the page via a WebSocket back channel.
+- **The page has two controls of its own, outside both SEPs,** sent to A and B over the same back channel: the Wipe button, which empties all four parties between the levels, and A's retry schedule, shown on screen.
 - **Versions behave as HTTP's `ETag`s do.** Clients compare them only for equality. A's versions need not sort in time, though they may, and a server that knows its own versions sort MAY rely on that inside its implementation. In the examples they are short strings, `v5` and `v6`.
 
 ```ts
@@ -128,8 +129,8 @@ Neither SEP-3415 nor this extension says how a gateway reaches its client. SEP-3
 | | MCP core, 2026-07-28 | Plain HTTP | Events, with Open Question 2's type | This extension |
 |---|---|---|---|---|
 | **Write** | `tools/call` on a tool the server offers, such as `write_note` | `PUT` on the resource's URL, and `DELETE` | (none) | (none) |
-| **Read** | `resources/read` | `GET` on the resource's URL | (none) | the `full` form's subscribe result |
-| **Poll for changes** | (none: `resources/read` has no conditional form) | a conditional `GET` with `If-None-Match`, answered `304 Not Modified` when nothing changed | `events/poll` with a cursor | (none, for now) |
+| **Read** | `resources/read` | `GET` on the resource's URL | (none) | (none: a client reads with `resources/read` or `GET`, though a `full` subscription's result also carries the contents) |
+| **Poll for changes** | `resources/read` on a cadence, which returns the whole contents every time, with nothing to say whether they changed | a conditional `GET` with `If-None-Match`, answered `304 Not Modified` when nothing changed | `events/poll` with a cursor | (none, for now) |
 | **Be told of changes** | `notifications/resources/updated` on an open `subscriptions/listen` stream, naming only the URI | (none) | a webhook POST naming the URI | a webhook POST with the new version, and the contents or a patch if asked for |
 
 Level 1 takes the first three columns, in Scenarios 1a, 1b and 2. Level 2 takes the last, from Scenario 3 on.
@@ -178,7 +179,7 @@ If-None-Match: "v5"                           {"title":"Buy milk","done":true}
 ```
 
 - **A version is the resource's strong `ETag`,** written without its quotes: `v6` on the wire of this extension, `"v6"` in an HTTP header.
-- **Polling is solved for `https` resources,** which is why this extension leaves polling out, for now. What a poller cannot get is being told, so it either polls often or learns late.
+- **Polling is solved for `https` resources,** which is why this extension leaves polling out, for now. Without some way to push, it either polls often or learns late.
 
 #### Scenario 2: `mcp.resource.updated` over Events
 
@@ -224,7 +225,7 @@ A lists the type in `events/list`, as Open Question 2 sketches it, carrying in `
 `b` then reads the note with `resources/read`, as in Scenario 1a.
 
 - **Nothing here is new.** It is SEP-3415's methods and webhook rules, an event type named as Open Question 2 sketches it, and B acting as SEP-3415's forward proxy. That is Goal 1.
-- **Each change costs two round trips,** the occurrence and the read, and the occurrence says only that something changed.
+- **Each change costs two round trips,** the notification and the read, and the notification says only that something changed.
 - **Catching up after an absence depends on A keeping its history of events.** SEP-3415 replays from `b`'s cursor when the type "is backed by a durable upstream". Otherwise delivery restarts from now, and `b` cannot tell what it missed. A replay also sends every change, though `b` needs only the latest of each note.
 
 Level 2 removes those last two costs.
@@ -237,13 +238,13 @@ A resource is state, and a watcher wants to hold its newest version, not to witn
 
 - **The server may coalesce.** A delivery still pending when a newer version lands is replaced by it, and a lost delivery is repaired by the next one.
 - **A version is not a cursor.** A version names a state of one resource, and is compared only for equality, as an `ETag` is. A cursor names a position in an order of changes. One resource needs only versions. Whether a collection needs a change cursor is open question 1, and a cursor for paging is open question 2.
-- **The server never stores a delivery position per subscription.** It does not record which version each subscriber last acknowledged (Larry, 2026-10-21). On a Durable Object, writes are the most expensive operation: with 1000 subscriptions, recording acknowledgements would turn one write per change into 1000. A subscription's record is written when it is created and when it is refreshed. The services that sync state over webhooks work the same way: Dropbox, Google Drive and Calendar, Gmail and Microsoft Graph keep no delivery position per subscriber, call their pushes lossy, and leave catching up to the client.
-- **Retry queue status per subscription is kept in memory, not storage.** For each subscription and URI, A holds the pending version and its attempts so far, and coalescing keeps that to one entry. Retries are bounded as SEP-3415 bounds them, a few attempts with backoff over no more than 10 to 15 minutes, which puts them with Slack's and Dropbox's short retries. Timers keep a Durable Object alive that long at compatibility dates from 2026-10-01, as Lumenize measured, so retries need no alarm and no write. A delivery whose retries run out, or that an eviction or restart drops, is repaired at the subscriber's next refresh. A webhook POST wakes a hibernating gateway, so B rarely misses one. A client behind a gateway that sleeps and wakes misses more, and catches up by refreshing when it reconnects.
-- **A refresh is the catch-up.** A refresh's result names the resource's current version, and in the `full` form carries its contents, so one call repairs any number of misses.
+- **The server never stores a delivery position per subscription.** It does not record which version each subscriber last acknowledged (Larry, 2026-10-21). On a Durable Object, writes are the most expensive operation: with 1000 subscriptions, recording acknowledgements would turn one write per change into 1000. A subscription's record is written when it is created and when it is refreshed. Other services that sync state over webhooks work the same way: Dropbox, Google Drive and Calendar, Gmail and Microsoft Graph keep no delivery position per subscriber, call their pushes lossy, and leave catching up to the client.
+- **Retry queue status per subscription is kept in memory, not storage.** For each subscription and URI, A holds the pending version and its attempts so far, and coalescing keeps that to one entry. Retries are bounded as SEP-3415 bounds them, a few attempts with backoff over no more than 10 to 15 minutes, which puts them with Slack's and Dropbox's short retries. Timers keep a Durable Object alive that long at compatibility dates from 2026-10-01, as Lumenize measured, so retries need no alarm and no write. A delivery whose retries run out, or that an eviction or restart drops, is repaired at the subscriber's next refresh. A webhook POST wakes a hibernating gateway, so B rarely misses one. A client behind a gateway that sleeps and wakes misses more, and catches up by refreshing when it reconnects. The retry schedule is a setting of A's: SEP-3415's bounds by default, and in the demo three attempts at 2, 4 and 8 seconds, so the audience sees a retry, and a newer version replacing a pending one, as they happen.
+- **A refresh is the catch-up.** A refresh is the subscribe call made again with the same target and webhook URL. SEP-3415 asks for one before a grant runs out, and a subscriber may make one whenever it may have missed something. It is neither a push nor a read. Its result names the resource's current version, and in the `full` form carries the contents when the subscriber's version is behind, so one call repairs any number of misses. Scenario 5 shows a routine one.
 
-#### Scenario 3: a subscription, and a change it hears about
+#### Scenario 3: a first subscription, from nothing
 
-`b` holds a copy of note-42 at `v5`. It connects to B at `wss://.../gateway/B/ws/b`, registers a secret, and subscribes with A in the `notify` form, which carries only the new version:
+The demo's Wipe empties A, B and `b`, and `a` writes note-42 again, as `v1`. The examples' versions restart at `v1` to stay easy to follow, where real ones are opaque and never repeat. `b` connects to B at `wss://.../gateway/B/ws/b`, registers a secret, and subscribes in the `full` form, holding nothing:
 
 ```jsonc
 // b → B, first, over b's WebSocket: this prototype's own message
@@ -253,12 +254,11 @@ A resource is state, and a watcher wants to hold its newest version, not to witn
 { "jsonrpc": "2.0", "id": 7, "method": "resources/webhooks/subscribe",
   "params": {
     "uri": ".../server/A/notes/inbox/note-42",
-    "form": "notify",          // the default; "full" adds the contents
-    "version": "v5",           // the version b holds; omit when it holds none
+    "form": "full",            // the contents in each delivery; notify if omitted
     "delivery": {
       "url": ".../gateway/B/hooks/b",       // B's URL for b, not b's own
       "secret": "whsec_<the same secret>" },
-    "ttlMs": 3600000 } }
+    "ttlMs": 3600000 } }       // no version: b holds none yet
 ```
 
 Before answering, A verifies that the webhook URL wants deliveries, by SEP-3415's handshake. It POSTs `{"type":"verification","challenge":"<nonce>"}` to B, signed with `b`'s secret. B checks the signature against the secret `b` registered, and echoes the challenge.
@@ -268,10 +268,18 @@ Before answering, A verifies that the webhook URL wants deliveries, by SEP-3415'
 { "resultType": "complete",
   "id": "sub_a3f1c8e2b0d49f7e",              // stable for (principal, url, uri)
   "refreshBefore": "2026-10-21T15:00:00Z",   // the grant; refresh before it
-  "version": "v5" }                          // current, and equal to b's: no news
+  "version": "v1",
+  "contents": [ { "uri": ".../server/A/notes/inbox/note-42",
+                  "mimeType": "application/json",
+                  "text": "{\"title\":\"Buy milk\"}" } ] }
 ```
 
-`a` marks the note done, making `v6`. A POSTs to B:
+- **The result is `b`'s first copy.** It names `v1` and carries the contents, so one call both subscribes and reads. In level 1, `b` subscribed and then read, and the read named no version.
+- **`b` holds nothing until this result arrives,** which is why its request names no version.
+
+#### Scenario 4: a change it hears about
+
+`a` marks the note done, making `v2`. A POSTs to B:
 
 ```http
 POST /gateway/B/hooks/b
@@ -281,72 +289,80 @@ webhook-timestamp: 1792591500
 webhook-signature: v1,<base64 HMAC-SHA256 over id, timestamp and body>
 X-MCP-Subscription-Id: sub_a3f1c8e2b0d49f7e
 
-{"uri":".../server/A/notes/inbox/note-42","form":"notify","version":"v6"}
+{"uri":".../server/A/notes/inbox/note-42","form":"full","version":"v2",
+ "contents":[{"uri":".../server/A/notes/inbox/note-42",
+   "mimeType":"application/json","text":"{\"title\":\"Buy milk\",\"done\":true}"}]}
 ```
 
-B verifies the signature, passes the body down `b`'s socket, then answers `200`:
+B verifies the signature, passes the body down `b`'s socket as it was, then answers `200`, and `b` replaces its copy with `v2`.
 
-```jsonc
-// B → b, over the WebSocket: the body A sent, as it was
-{"uri":".../server/A/notes/inbox/note-42","form":"notify","version":"v6"}
-```
-
-- **This differs from Scenario 2's occurrence by one field, the version,** and the difference does its work at once. `b` fetches the note only because `v6` is not what it holds, and a delivery naming a version `b` already holds needs no action, which makes every delivery safe to repeat.
 - **The headers and the signature are SEP-3415's,** so B checks them with an off-the-shelf Standard Webhooks verifier. `webhook-id` is the same for every attempt at one URI and version, so a receiver that deduplicates on it drops repeats.
 - **B answers only after passing the delivery on,** as SEP-3415 asks an endpoint to accept a delivery only once it has persisted or forwarded it.
+- **In the default `notify` form, the same delivery carries only the version,** as `{"uri": ..., "form": "notify", "version": "v2"}`, and `b` fetches the note when it wants it, with `If-None-Match: "v1"`. That is one field more than level 1's occurrence, and the field lets `b` skip a read whenever the version is one it already holds, which makes every delivery safe to repeat.
 
-#### Scenario 4: the contents in the delivery, and changes it never sees
+#### Scenario 5: a refresh before the grant runs out
 
-`b` refreshes in the `full` form, holding `v6`. A refresh is the same call with the same `uri` and `delivery.url`. It extends the grant, and may change the form and rotate the secret.
+A refresh is the same subscribe call, made again with the same `uri` and `delivery.url`. SEP-3415 asks a subscriber to make it before `refreshBefore`, and the grant then starts again. It may also change the form and rotate the secret. `b` names the version it holds:
 
 ```jsonc
+// b → A, at 14:20, before the 15:00 grant runs out
 "params": { "uri": ".../server/A/notes/inbox/note-42", "form": "full",
-            "version": "v6",
+            "version": "v2",
             "delivery": { "url": ".../gateway/B/hooks/b", "secret": "whsec_..." } }
+// A → b
+{ "resultType": "complete", "id": "sub_a3f1c8e2b0d49f7e",
+  "refreshBefore": "2026-10-21T15:20:00Z",
+  "version": "v2" }                          // equal to b's: no contents, no news
 ```
 
-Then `b`'s laptop sleeps and its socket to B closes, so B answers `503` for it, while `a` makes two edits:
+- **A refresh is neither a push nor a read.** It is the subscriber's own call, it extends the subscription, and its result says what is current, with the contents only when the subscriber's version is behind. Scenario 7 shows that case.
+- **A subscriber may refresh whenever it suspects it missed something,** not only when a grant is running out. `b` refreshes every subscription when it reconnects to B.
+
+#### Scenario 6: changes it never sees
+
+`b`'s laptop sleeps and its socket to B closes, so B answers `503` for it, while `a` makes two edits:
 
 | Time | What happens at A | What A sends to B |
 |---|---|---|
-| 14:30:00 | an edit makes `v7` | a delivery of `v7`, answered `503` |
-| 14:30:30 | an edit makes `v8` | nothing: `v8` replaces the pending `v7` |
-| 14:31:00 | the first retry | a delivery of `v8`, answered `503` |
-| 14:34:00 | `b` is back, and the second retry | a delivery of `v8`, which B passes on and answers `200` |
+| 14:30:00 | an edit makes `v3` | a delivery of `v3`, answered `503` |
+| 14:30:30 | an edit makes `v4` | nothing: `v4` replaces the pending `v3` |
+| 14:31:00 | the first retry | a delivery of `v4`, answered `503` |
+| 14:34:00 | `b` is back, and the second retry | a delivery of `v4`, which B passes on and answers `200` |
 
 ```jsonc
 // the body that succeeds at 14:34:00
-{ "uri": ".../server/A/notes/inbox/note-42", "form": "full", "version": "v8",
+{ "uri": ".../server/A/notes/inbox/note-42", "form": "full", "version": "v4",
   "contents": [ { "uri": ".../server/A/notes/inbox/note-42",
                   "mimeType": "application/json",
                   "text": "{\"title\":\"Buy oat milk\",\"done\":true}" } ] }
 ```
 
-- **`v7` never reaches `b`, and nothing is lost,** because `v8` is everything `b` needs.
+- **`v3` never reaches `b`, and nothing is lost,** because `v4` is everything `b` needs.
+- **In the demo, the retries come seconds apart,** not minutes, as § *Only the newest version matters* says, so the audience watches `v4` replace `v3`.
 - **Contents travel only when a subscriber asks for them.** SEP-3415's § *Payload minimality* says a server SHOULD keep payloads minimal, and `notify`, the default form, is. `b` asked for `full`, which a server need not offer.
 - **A keeps at most one delivery in flight per subscription and URI,** and retries only the newest version. Deliveries for a URI therefore arrive in version order, and a stale one can never overtake a newer one.
 - **`contents` has the shape of `resources/read`'s result,** so the code that applies a read applies a delivery.
 
-#### Scenario 5: an absence longer than the retries
+#### Scenario 7: an absence longer than the retries
 
-`b` stays away past A's retry window, and A abandons the delivery of `v9`. When `b` wakes, it reconnects to B, registers its secret again, and refreshes, naming the version it still holds:
+`b` stays away past A's retry window, and A abandons the delivery of `v5`. When `b` wakes, it reconnects to B, registers its secret again, and refreshes, naming the version it still holds:
 
 ```jsonc
 // b → A: the refresh on reconnecting
 "params": { "uri": ".../server/A/notes/inbox/note-42", "form": "full",
-            "version": "v8", ... }
+            "version": "v4", ... }
 // A → b
 { "resultType": "complete", "id": "sub_a3f1c8e2b0d49f7e",
   "refreshBefore": "2026-10-21T16:30:00Z",
-  "version": "v9",                          // differs from b's v8: b is behind
-  "contents": [ { "...": "the note at v9" } ],
+  "version": "v5",                          // differs from b's v4: b is behind
+  "contents": [ { "...": "the note at v5" } ],
   "deliveryStatus": { "active": true,       // retries ran out; not suspended
                       "lastError": "http_5xx",
                       "lastDeliveryAt": "2026-10-21T14:34:00Z" } }
 ```
 
 - **A refresh is the catch-up,** and it goes straight from A to `b`, not through B. However much `b` missed, this one call brings it to the current version, where level 1 needed A's history of events to replay.
-- **`deliveryStatus` is SEP-3415's.** Here it reports the failed attempts at `v9`, with delivery still active, since retries running out is not a suspension.
+- **`deliveryStatus` is SEP-3415's.** Here it reports the failed attempts at `v5`, with delivery still active, since retries running out is not a suspension.
 
 #### What a receiver's answer means
 
@@ -359,7 +375,7 @@ What each answer means is SEP-3415's. This extension adds two things: a body too
 | `413 Payload Too Large` | A stops retrying that version. In the `full` form, A sends a body that large in the `notify` form instead, so this answer should never come. |
 | any other status, such as `503` while `b` is away, or no answer within about 5 seconds | A retries with backoff, and a newer version that lands meanwhile replaces the pending one. |
 
-#### Scenario 6: a deletion
+#### Scenario 8: a deletion
 
 `a` deletes note-42, through `delete_note`. A delivers, and B passes on:
 
@@ -368,7 +384,7 @@ What each answer means is SEP-3415's. This extension adds two things: a body too
 ```
 
 - **Every form delivers a deletion this way,** with no version and no contents. `b` deletes its copy, and a read of the note now fails.
-- **The subscription carries on,** since a write can create the note again. Its next version, say `v10`, is delivered like any other. A subscriber that wants no more deliveries unsubscribes with the same `uri` and `delivery.url`.
+- **The subscription carries on,** since a write can create the note again. Its next version, say `v6`, is delivered like any other. A subscriber that wants no more deliveries unsubscribes with the same `uri` and `delivery.url`.
 
 #### Collections
 
@@ -386,7 +402,7 @@ So a subscription names one of three targets:
 { "listed": true }                              // all that resources/list returns
 ```
 
-##### Scenario 7: a folder
+##### Scenario 9: a folder
 
 `b` subscribes to A's notes folder in the `notify` form, holding none of it yet:
 
@@ -538,6 +554,7 @@ type ResourceChange = { uri: string } & (
 |---|---|
 | The design has two levels, demoed in order: `notify` over Events as Open Question 2 sketches it, then resource state sync in this extension's own methods (Larry, 2026-10-22) | State sync on Events' methods too: that is the flavor that extends Events, kept for the later comparison. Going straight to state sync: it skips the floor a sponsor can accept without argument, and the baseline the second level is measured against. |
 | The floor is Open Question 2 as written, and level 2 answers what Open Question 6 and Peter's comment of 2026-10-16 opened, proved on resources first (Larry, 2026-10-22) | Presenting state sync as the answer to Open Question 2: its sketch carries only a URI, so the claim would overreach. Starting with tasks: they bring in the Tasks extension, where a resource already has a URI and contents. |
+| Level 2 starts from a clean slate: the demo's Wipe button empties A, B and `b` after level 1 (Larry, 2026-10-23) | Carrying `b`'s copy over from level 1: level 1's read names no version, so `b` would hold a version it never learned, and the line between notification and state sync would blur. |
 | The demo writes through A's `write_note` tool first, and adds `PUT` later (Larry, 2026-10-22) | `PUT` first: plain HTTP is not MCP, and the floor should be MCP end to end. |
 | The standalone flavor is built first, with its own methods and SEP-3415's webhook rules taken by reference (Larry, 2026-10-20) | Extending or amending Events first: both ride `events/*` and override its rules for a type. The standalone flavor overrides nothing, and is the easiest to build. |
 | Resources, not state in general (Larry, 2026-10-20) | A general state contract: it needs a key, a value type and a way to offer it on any event type, all new vocabulary, where a resource already has a URI and contents. |
