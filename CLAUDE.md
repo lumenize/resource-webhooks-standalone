@@ -42,13 +42,13 @@ Linked from lumenize: `/write-task`, `/review-task`, `/build-task` and `/refacto
 
 - When a linked skill names a repo path that does not exist here, such as `tasks/README.md`, read it from `../lumenize/`. New files the skill writes, a task archive included, go in this repo.
 - Run the prose checker as `node ../lumenize/scripts/check-prose.mjs <file>`.
-- `/review-task`'s product lens is not Lumenize's `docs/vision/`. Here it is the SEPs, the Triggers & Events working group's charter, and what earns standing with the working group. The task file's design intent states it.
+- `/review-task`'s product lens is not Lumenize's `docs/vision/`. Here it is the SEPs, the charter of the Tasks and Events working group (named Triggers & Events until 2026-10-21), and what earns standing with the working group. The task file's design intent states it.
 - Not linked: `/live`, `/nightly-pass` and `/release-workflow`, which drive Lumenize's systems; the doc-example skills, which are for Lumenize's website; and `/task-management`, because work here is always task-file-first.
 
 ## Sibling repos
 
 - `../mcp-events-prototype` is the earlier prototype, of a state contract carried over SEP-3415's Events. Its task files, as committed in 79a927d, are this repo's mining source. They stay untouched until a mining pass gives each piece a fate: carried, superseded or dropped on purpose. Read them for facts when needed, and say so when an idea is carried from them.
-- `../experimental-ext-triggers-events` is the fork of the Triggers & Events working group's repo (origin `lumenize/experimental-ext-triggers-events`, with `upstream`). The SEP draft goes there later, on the `resource-webhooks` branch, for a PR to that repo.
+- `../experimental-ext-triggers-events` is the fork of the Tasks and Events working group's repo, still named for Triggers & Events (origin `lumenize/experimental-ext-triggers-events`, with `upstream`). The SEP draft goes there later, on the `resource-webhooks` branch, for a PR to that repo.
 - `../modelcontextprotocol` is the fork for SEP PRs (origin `lumenize/modelcontextprotocol`, with `upstream`).
 - `../mcp-typescript-sdk` is the fork for SDK PRs (origin `lmaccherone/mcp-typescript-sdk`). An Extensions Track SEP needs a reference implementation in an official SDK before review, and that goes there. It is far behind upstream, so sync it before branching.
 - `../lumenize` is where the guidance above lives. Do not edit it from here unless Larry asks.
