@@ -78,7 +78,7 @@ The predecessor, `../mcp-events-prototype`, never got as far as code, only desig
 - **Level 1, the floor, is `mcp.resource.updated` over Events, as Open Question 2 sketches it.** It uses SEP-3415's own methods and an event type of that name, and adds nothing to either, so it needs nothing from `sep-notes.md`. It takes the name Open Question 2 sketches, though SEP-3415 has yet to decide whether to reserve `mcp.*` names at all.
 - **Level 2 is resource state sync, in this extension's own methods.** It keeps the cast, the gateway and SEP-3415's webhook rules, and changes what a delivery carries and how a subscriber catches up. Every requirement in `sep-notes.md` is for this level.
 - **The demo runs them in that order,** so the second is always seen against the first. Between them, the page's Wipe button, which § *The cast* defines, empties all four parties, so level 2 starts from a clean slate, with nothing carried over from level 1 (Larry, 2026-10-23).
-- **A's webhook code is built once, at level 1, and shared.** Level 2 composes it with a coalescing queue per URI, its own body and its own `webhook-id`. The prototype builds SEP-3415's MUSTs and whatever the demo shows. Suspension and dual-signing during a secret's rotation wait until something needs them.
+- **A's webhook code is built once, at level 1, and shared.** Level 2 composes it with a coalescing queue per URI and its own body. The prototype builds SEP-3415's MUSTs and whatever the demo shows. Suspension and dual-signing during a secret's rotation wait until something needs them.
 
 ### The cast
 
@@ -300,7 +300,7 @@ At 15:05, `a` marks the note done, making `v2`. A POSTs to B:
 ```http
 POST /gateway/B/hooks/b
 Content-Type: application/json
-webhook-id: chg_9c41e0d2
+webhook-id: msg_2Lq8vT0cXwR4mB7nYp3sKe6dJf1
 webhook-timestamp: 1792595100
 webhook-signature: v1,<base64 HMAC-SHA256 over id, timestamp and body>
 X-MCP-Subscription-Id: sub_a3f1c8e2b0d49f7e
@@ -312,7 +312,7 @@ X-MCP-Subscription-Id: sub_a3f1c8e2b0d49f7e
 
 B verifies the signature, passes the body down `b`'s socket as it was, then answers `200`, and `b` replaces its copy with `v2`.
 
-- **The headers and the signature are SEP-3415's,** so B checks them with an off-the-shelf Standard Webhooks verifier. `webhook-id` is the same for every attempt at one URI and version, so a receiver that deduplicates on it drops repeats.
+- **The headers and the signature are SEP-3415's,** so B checks them with an off-the-shelf Standard Webhooks verifier. `webhook-id` is the same for every retry of one version of one URI, so a receiver that deduplicates on it drops repeats (R14).
 - **B answers only after passing the delivery on,** as SEP-3415 asks an endpoint to accept a delivery only once it has persisted or forwarded it.
 - **In the default `notify` form, the same delivery carries only the version,** as `{"uri": ..., "form": "notify", "version": "v2"}`, and `b` fetches the note when it wants it, with `If-None-Match: "v1"`. That is the same news as level 1's occurrence plus one field, the version, and the field lets `b` skip a read whenever the version is one it already holds, which makes every delivery safe to repeat.
 
@@ -541,7 +541,7 @@ type ResourceChange = { uri: string } & (
 ## Constraints
 
 - **MCP 2026-07-28's `schema.ts` is the only schema.** `ResourceContents` and its kinds are reused from it, and runtime validation is derived from its TypeScript types, as CLAUDE.md sets out.
-- **SEP-3415's text is cited at the PR's head commit, 2ec39b9,** so a later revision cannot change the meaning of either level unnoticed.
+- **SEP-3415's text is cited at the PR's head commit, b0efd11,** so a later revision cannot change the meaning of either level unnoticed.
 - **SEP-2133 binds the extension:** Apache-2.0, Extensions Track, and an official-SDK reference implementation before review.
 - **Cloudflare Workers and Durable Objects host the prototype,** under `critical.md`'s rules for storage, secrets and `compatibility_date`.
 

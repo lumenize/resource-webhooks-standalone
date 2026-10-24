@@ -45,7 +45,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 - **R11.** When a resource the subscription covers is deleted, the server MUST mint a version for the deletion, like any other version, and deliver `{"uri": ..., "form": "notify", "version": ..., "deleted": true}`, whatever the subscription's form. The subscription MUST carry on.
 - **R12.** A server MUST keep at most one delivery in flight per subscription and URI. When a newer version of a resource lands while an older one is pending or being retried, the server MUST deliver the newer one in its place (N1).
 - **R13.** A server MUST NOT deliver a version of a resource after delivering a newer one to the same subscription. It MAY skip intermediate versions (N1).
-- **R14.** `webhook-id` MUST be the same for every attempt to deliver one version of one URI to one subscription, and MUST differ otherwise. It MUST use only characters safe in an HTTP header, as a hash of those three does.
+- **R14.** One message, in SEP-3415's sense of `webhook-id`, is one version of one URI on one subscription. Its `webhook-id` is the same for every retry, and a newer version that replaces a pending one is a new message, with a new `webhook-id`.
 - **R15.** A client SHOULD ignore a delivery naming a version it already holds, and SHOULD pass the target's version it holds in `version` on every refresh.
 - **R26.** A `ResourceChange` MUST NOT carry a top-level `type`, so that SEP-3415's rule tells it apart from a control envelope.
 - **R27.** In the `full` form, a server MUST deliver a change in the `notify` form instead when its body would exceed the 256 KiB bound that SEP-3415's delivery profile recommends (N4).
@@ -59,7 +59,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Taken from SEP-3415 by reference
 
-- **R17.** Webhook delivery follows SEP-3415's § *Webhook-Based Delivery*, at commit 2ec39b9, with these substitutions: this extension's methods for `events/subscribe` and `events/unsubscribe`, R6's key for SEP-3415's subscription key, a `ResourceChange` for an `EventOccurrence`, and R14's `webhook-id` for an event's `eventId`. It narrows it as N1 to N6 say. SEP-3415's `cursor`, `maxAgeMs`, `truncated` and `gap` envelope do not apply to a target naming one resource. For a collection, they wait on Q1 in the master plan's § *Open questions*.
+- **R17.** Webhook delivery follows SEP-3415's § *Webhook-Based Delivery*, at commit b0efd11, with these substitutions: this extension's methods for `events/subscribe` and `events/unsubscribe`, R6's key for SEP-3415's subscription key, a `ResourceChange` for an `EventOccurrence`, and a change's `uri` and `version` for an event's `eventId`. It narrows it as N1 to N6 say. SEP-3415's `cursor`, `maxAgeMs`, `truncated` and `gap` envelope do not apply to a target naming one resource. For a collection, they wait on Q1 in the master plan's § *Open questions*.
 - **R29.** This extension uses SEP-3415's general-purpose error codes as SEP-3415 defines them: `Forbidden` for a principal refused or missing, `ResourceExhausted` for a server limit, `CallbackEndpointError` for a callback that fails verification or cannot be reached, plus `Unsupported` (R7) and `NotFound` (R16).
 
 ## Collections
