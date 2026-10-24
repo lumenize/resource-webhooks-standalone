@@ -6,7 +6,9 @@ These notes are for the design's second level, resource state sync. The first le
 
 ## Departures from SEP-3415
 
-**This extension takes SEP-3415's webhook delivery by reference, and goes against none of its text.** A departure found later goes here, with what it needs from Peter.
+**This extension takes SEP-3415's webhook delivery by reference, and goes against its text in one place.** Each departure says what it needs from Peter.
+
+- **D1. The reserved header and well-known paths are reused (R17).** SEP-3415 reserves them for Events: "The HTTP header `X-MCP-Subscription-Id`, and the well-known paths `/.well-known/mcp-webhook-receiver.json` and `/.well-known/mcp-webhook-jwks.json`, are reserved for this extension." Resource webhooks uses all three, with the meanings SEP-3415 gives them. Read as barring other meanings, the reservation allows that, and read as barring other uses, it does not. Reuse lets one receiver, with one receiver document on its origin, serve both extensions without telling their deliveries apart. It needs Peter to agree that the reservation bars other meanings, not other uses. If he does not, this extension names a header and paths of its own, and a receiver that serves both handles two sets. The JWKS path may yet go: SEP-3415 is still choosing between it and SEP-2127's server cards as the place to publish the optional signing key (Clare Liguori, 2026-10-19, and Peter, 2026-10-23, on its thread).
 
 ## Narrowings of SEP-3415
 
@@ -17,9 +19,9 @@ These notes are for the design's second level, resource state sync. The first le
 - **N3. The subscription `id` is a keyed hash (R25),** where SEP-3415 asks only that it be deterministic.
 - **N4. A body too large for the `full` form goes as `notify` (R27),** keeping every body within SEP-3415's 256 KiB delivery profile.
 - **N5. A receiver's `410` stops one version (R28).** SEP-3415 makes it non-retryable for that delivery and leaves the subscription unaffected. Under coalescing, a delivery is one version, so later versions still go.
-- **N6. Contents travel only on request (R5, R10).** SEP-3415's § *Payload minimality* says a server SHOULD keep payloads to what identifies a change. The default form, `notify`, does. A subscriber that asks for `full` gets the contents, because sparing it a read is the point of the state contract, and a server need not offer `full` at all (R1).
+- **N6. Contents travel only on request (R5, R10).** SEP-3415's § *Payload minimality* says "Servers SHOULD keep event payloads minimal: enough to identify and triage the event, and not the full content." The default form, `notify`, does, naming only the resource and its version. A subscriber that asks for `full` gets the contents, because sparing it a read is the point of the state contract, and a server need not offer `full` at all (R1). A SHOULD leaves room for a reason that is understood, and here the subscriber gives it by asking. SEP-3415's own Open Question 6 sketches a task event whose payload may carry the task's `result`.
 
-Everything else in R17 is a substitution: this extension's methods, key and body in place of SEP-3415's. It also reuses SEP-3415's header `X-MCP-Subscription-Id` and its two well-known webhook paths, with the meanings SEP-3415 gives them. SEP-3415 reserves them for Events, which stops another extension giving them other meanings, and this one gives them none. The JWKS path may yet go: SEP-3415 is still choosing between it and SEP-2127's server cards as the place to publish the optional signing key (Clare Liguori, 2026-10-19, and Peter, 2026-10-23, on its thread).
+Everything else in R17 is a substitution: this extension's methods, key and body in place of SEP-3415's.
 
 ## The capability
 

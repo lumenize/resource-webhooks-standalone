@@ -355,7 +355,7 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
 
 - **`v3` never reaches `b`, and nothing is lost,** because `v4` is everything `b` needs.
 - **In the demo, the retries come seconds apart,** not minutes, as § *Only the newest version matters* says, so the audience watches `v4` replace `v3`.
-- **Contents travel only when a subscriber asks for them.** SEP-3415's § *Payload minimality* says a server SHOULD keep payloads minimal, and `notify`, the default form, is. `b` asked for `full`, which a server need not offer.
+- **Contents travel only when a subscriber asks for them.** SEP-3415's § *Payload minimality* says a server SHOULD keep payloads minimal, and `notify`, the default form, is. `b` asked for `full`, which a server need not offer (N6).
 - **A keeps at most one delivery in flight per subscription and URI,** and retries only the newest version. Deliveries for a URI therefore arrive in version order, and a stale one can never overtake a newer one.
 - **`contents` has the shape of `resources/read`'s result,** so the code that applies a read applies a delivery.
 
@@ -515,7 +515,8 @@ type ResourceChange = { uri: string } & (
   - the `verification` and `terminated` envelopes
   - the retry bounds and suspension
   - eager unsubscribe
-- **Replaced.** [sep-notes.md](../sep-notes.md) sorts each of these into a plain substitution or a narrowing within the room SEP-3415 leaves. None goes against SEP-3415's text:
+  - the header `X-MCP-Subscription-Id` and the two well-known webhook paths, though SEP-3415 reserves them for Events, which makes their reuse the one departure, D1 in [sep-notes.md](../sep-notes.md)
+- **Replaced.** sep-notes.md sorts each of these into a plain substitution or a narrowing within the room SEP-3415 leaves:
   - **The key.** The subscription key is `(principal, delivery.url, target)`: who asked, the webhook URL deliveries go to, and the resource URI, template or `listed` they cover. It identifies a subscription for refresh and unsubscribe, and a server's storage keys subscriptions by it or by the `id` derived from it. A target is its kind and its value, compared exactly, as `uri` with `.../server/A/notes/inbox/note-42`, so the key needs no canonical form of JSON arguments (R6). The form is not part of it, because it changes only what a delivery carries, so a refresh may change it. A principal that watches one target from two places gives each place its own `delivery.url`, as SEP-3415's example `/hooks/client123` does, and an unsubscribe names the webhook URL of the one it ends.
   - **The subscription `id`** is a keyed hash of the key, so a logged `id` cannot be used to test a guessed principal.
   - **The body.** A `ResourceChange` takes the place of an `EventOccurrence`.
@@ -547,7 +548,7 @@ type ResourceChange = { uri: string } & (
 
 ## Future state
 
-- ⚠️ Design consideration: **a webhook delivery SEP of its own.** Once a second extension takes SEP-3415's webhook delivery by reference, the delivery rules might be better in a SEP that both build on. The first sign is that SEP-3415 reserves its webhook header and well-known paths for Events, though this extension reuses them with the same meanings. Not proposed now (Larry, 2026-10-21).
+- ⚠️ Design consideration: **a webhook delivery SEP of its own.** Once a second extension takes SEP-3415's webhook delivery by reference, the delivery rules might be better in a SEP that both build on. The first sign is D1 in sep-notes.md: SEP-3415 reserves its webhook header and well-known paths for Events, and this extension reuses them. Not proposed now (Larry, 2026-10-21).
 - ⚠️ Design consideration: **delivery over a client's open stream.** If Felix's `extensions` member on `subscriptions/listen`'s filter lands, level 2 could also deliver over that stream, under this extension's identifier, to a client that holds one, without departing from SEP-3371. Until then, this extension stays off that stream.
 - **Tasks.** Open Question 6 and ext-tasks #24 ask for the same thing on task state, and a task exposed as a resource gets level 2 unchanged.
 - **A mirror,** where a subscriber keeps copies at the server's versions and serves them to readers of its own, as the predecessor designed. The design covers a client behind a gateway instead.
