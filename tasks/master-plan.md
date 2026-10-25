@@ -555,9 +555,28 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
 - **Each member comes back once, at its newest version.** note-43 was created, edited twice and deleted after `c1`, and `b` gets only the deletion. A answers from each member's newest version, so nothing replays the steps between, as § *Only the newest version matters* says.
 - **Deliveries carry no cursor,** so note-43's delivery at 16:15 left `b`'s cursor at `c1`. A cursor in a delivery would have to be a watermark, since deliveries overlap. A refresh can therefore return a member `b` already holds, and `b` skips it by its version.
 - **`c1` and `c6` are opaque.** A server that stamps its versions from one counter MAY use the version as the cursor, as Kubernetes stamps an object's and a list's `resourceVersion` from etcd's one revision. `b` never compares either (R36).
-- **A cursor A can no longer serve gets every member, with `reset: true`.** A forgets deletions older than its cut-off window, so for an older cursor it cannot say what was deleted. It lists every member that exists instead, and `b` drops any it holds that the reset does not list.
+- **A cursor A can no longer serve gets every member, with `reset: true`,** as Scenario 10b shows. A forgets deletions older than its cut-off window, so for an older cursor it cannot say what was deleted. It lists every member that exists instead, and `b` drops any it holds that the reset does not list.
 - **A long catch-up comes in pages.** A result with `hasMore: true` stops partway, and `b` refreshes again with its `cursor`, as `events/poll` drains a backlog with `hasMore`. A reset pages the same way, its cursor then a place in the listing.
 - **This is how state-sync services catch up.** Dropbox's `cursor`, Drive's `pageToken`, Calendar's `syncToken`, Gmail's `historyId` and Graph's `deltaLink` are each a cursor the client holds. Dropbox, Calendar, Gmail and Graph answer one too old for them by having the client start over, as a reset does here.
+
+##### Scenario 10b: a cursor too old to serve
+
+*In sep-notes.md: R34.*
+
+Run Scenario 10 again with A's cut-off window at 10 minutes, and say `a` deleted note-43 before 16:40. By the 16:50 refresh, A has dropped the row of that deletion, so it can no longer say what was deleted after `c1`, and it lists every member instead:
+
+```jsonc
+// A → b, answering the same refresh naming c1
+{ "resultType": "complete", "id": "sub_5d02e7a9c1b84f36",
+  "refreshBefore": "2026-10-21T17:50:00Z",
+  "reset": true,
+  "changes": [
+    { "uri": ".../server/A/notes/inbox/note-44", "form": "notify",
+      "version": "v1" } ],
+  "cursor": "c6" }
+```
+
+`b` drops note-43, since the reset does not list it.
 
 #### Who may subscribe
 
