@@ -147,6 +147,26 @@ Neither SEP-3415 nor this extension says how a gateway reaches its client. SEP-3
 
 Level 1 takes the first three columns, in Scenarios 1a, 1b and 2. Level 2 takes the last, from Scenario 3 on.
 
+### Cursors, versions and IDs
+
+Several values in SEP-3415 and this design look alike: opaque strings a client is handed, keeps, and sometimes sends back. They answer different questions. SEP-3415's `cursor` is one idea, a position in an event type's stream, and the position a server hands out depends on the delivery mode. In webhook mode it is the watermark.
+
+| Value | Example | What it names | What the client, or its receiver, does with it | Compared | In this design |
+|---|---|---|---|---|---|
+| `cursor` in a request to `events/subscribe`, `events/poll` or `events/stream` | `"cursor_0042"`, or `null` | where delivery starts: `null` for now, any other value to replay from that position | sends the last cursor it kept | as a position, by the server only | level 1, on a subscribe and each refresh |
+| `cursor` in a poll result, or on a push event | `"cursor_0042"` | the position just after what the client has been given | keeps it, and sends it on the next request | as a position, by the server only | not used: level 1 delivers by webhook |
+| `cursor` in a webhook delivery or a subscribe result: the watermark | `"cursor_0041"`, on event 43's delivery | a position before which every event has been accepted or abandoned, so it can lag the event it arrives with | keeps it, and sends it on a refresh | as a position, by the server only | level 1, when A can replay |
+| `eventId` | `"evt_0042"` | one upstream event, the same on every subscription it matches | drops a second copy that arrives on the same subscription | for equality | level 1's occurrences |
+| `webhook-id` | `"msg_2Lq8vT0cXwR4mB7nYp3sKe6dJf1"` | one delivered message, the same on every retry of it | drops a retry it already accepted | for equality | both levels (R14) |
+| subscription `id` | `"sub_a3f1c8e2b0d49f7e"` | one subscription, derived from its key | picks the secret that verifies a delivery, by `X-MCP-Subscription-Id` | for equality | both levels (R25) |
+| `version` | `"v2"` | one state of one resource, with the semantics of an `ETag` | names the version it holds on a refresh, and ignores a delivery of it | for equality only | level 2 |
+| change cursor | (none yet) | a position in the order of one collection's changes | sends it on a refresh, to get the members changed since | as a position, by the server only | option (b) of Q1 |
+
+- **The watermark lags because webhook deliveries overlap.** A posts each event as it happens and retries each on its own, so deliveries can land out of order. Say events 41, 42 and 43 go out, and 42's first attempt fails while 41 and 43 succeed. If 43's delivery carried `cursor_0043`, a client that kept it and later replayed from it would never get 42. So it carries `cursor_0041`, and only a delivery or refresh after 42 is accepted, or abandoned, carries `cursor_0043`. Poll and push hand out events in order, so there the cursor after an event is that event's own position.
+- **`truncated: true` is a flag, not a value to keep.** It says that delivery started later than the cursor asked, so some events were skipped.
+- **A history to replay from can live in memory,** as SEP-3415's Appendix A suggests for `events/poll`. The cursor is then a sequence number in that buffer, and after a restart the server answers every cursor with `truncated: true`.
+- **The paging cursor is a different thing again.** MCP's list methods, such as `resources/list`, return `nextCursor` when a result runs to more than one page, and the client sends it back as `cursor` for the next page. It is a position in one listing, not in any order of changes, so it tells a client nothing about what changed between two reads. Q2 asks which kind of cursor a collection's catch-up would page with.
+
 ### Level 1: `mcp.resource.updated` over Events
 
 #### Scenario 1a: MCP core as it is
@@ -249,7 +269,7 @@ Level 2 removes those last two costs.
 A resource is state, and a watcher wants to hold its newest version, not to witness every change. This is perhaps the biggest mental model difference from the Events SEP. Three edits while a receiver is down leave it needing only the third. These things follow:
 
 - **The server may coalesce.** A delivery still pending when a newer version lands is replaced by it, and a lost delivery is repaired by the next one.
-- **A version is not a cursor.** A version names a state of one resource, and is compared only for equality, as an `ETag` is. A cursor names a position in an order of changes. One resource needs only versions. Whether a collection needs a change cursor is Q1 in § *Open questions*, and a cursor for paging is Q2.
+- **One resource needs only versions,** never a cursor, since a version already says which state a client holds (§ *Cursors, versions and IDs*). Whether a collection needs a change cursor is Q1 in § *Open questions*, and a cursor for paging is Q2.
 - **The server never stores a delivery position per subscription.** It does not record which version each subscriber last acknowledged (Larry, 2026-10-21). On a Durable Object, writes are the most expensive operation: with 1000 subscriptions, recording acknowledgements would turn one write per change into 1000. A subscription's record is written when it is created and when it is refreshed. Other services that sync state over webhooks work the same way: Dropbox, Google Drive and Calendar, Gmail and Microsoft Graph keep no delivery position per subscriber, call their pushes lossy, and leave catching up to the client.
 - **Retry queue status per subscription is kept in memory, not storage.**
   - **What it holds:** for each subscription and URI, the pending version and its attempts so far. Coalescing keeps that to one entry.
