@@ -154,7 +154,17 @@ block-beta
 
     Every entry a read under a template returns is a JSON note or list, so each template can carry one `mimeType`. A type's root, as `.../server/A/notes`, is a collection A serves that neither template matches, since `{+path}` needs at least one character.
   - **`resources/list` returns the inbox's notes and every list,** so a `listed` target covers more than the inbox does, and an archived note is reachable only through a template.
-  - **A keeps each resource's earlier versions, not only its latest,** as Lumenize's temporal model keeps them (Larry, 2026-10-25). A change adds a version, and a deletion adds one marked deleted. The `patch` form patches from them, and a collection's catch-up reads its members' newest versions from them. A forgets earlier versions and deletions once they are older than its cut-off window, a setting of A's, a day by default, which the page can shorten to show a reset.
+  - **A keeps every version of each resource, as rows stamped from one counter across A** (Larry, 2026-10-25), the way Lumenize's temporal model keeps them. A change adds a row, and a deletion adds one marked deleted. Scenario 10's rows after the cursor `c1` are:
+
+    | Stamp | Resource | Version | Deleted |
+    |---|---|---|---|
+    | `c2` | note-43 | `v1` | |
+    | `c3` | note-43 | `v2` | |
+    | `c4` | note-43 | `v3` | |
+    | `c5` | note-44 | `v1` | |
+    | `c6` | note-43 | `v4` | yes |
+
+    A cursor is a stamp. A collection's catch-up from `c1` reads each resource's newest row past it, `c6` and `c5`, and a patch reads the row of the version a client names. A drops rows older than its cut-off window, a setting of A's, a day by default, which the page can shorten to show a reset, but keeps each live resource's newest row. A cursor older than the rows A dropped gets a reset.
   - **A list is the second type,** `{ "title": "Groceries", "items": ["oat milk"] }`, so that a template can match across types.
 - **B is a gateway, and stores nothing.** It receives webhooks for each of its clients at a URL of that client's own, `/gateway/B/hooks/{client}`, the path shape SEP-3415's own examples use, and passes each one down that client's WebSocket. Each socket carries its client's secret in its attachment, so B writes nothing, as Lumenize's Gateway writes nothing. B never calls A, and holds no principal there.
   - **SEP-3415 uses both words, gateway and forward proxy, sometimes in one paragraph,** as Appendix A's webhook mode does. This design says gateway. Unlike the proxy of § *Webhook-Based Delivery*, which serves events to its clients by poll or push and so buffers them, B passes each delivery straight down its client's socket and keeps none. Lumenize's Gateway also carries a client's calls up to the nodes, and this one carries only deliveries down, since `b` calls A itself.
@@ -197,7 +207,7 @@ Several values in SEP-3415 and this design look alike: opaque strings a client i
 
 | Value | What it names | What uses it, and how | In this design |
 |---|---|---|---|
-| SEP-3415's `cursor`, as `cursor_0042` | A position in an event type's stream. In webhook mode it is the watermark, described below. | The client keeps the last one it got and sends it on a refresh, and the server replays from there. `null` means start from now. | Level 1 sends `null` and gets `null` back, since A offers no replay. |
+| SEP-3415's `cursor`, as `cursor_0042` | A position in an event type's stream. In webhook mode it is the watermark. | The client keeps the last one it got and sends it on a refresh, and the server replays from there. `null` means start from now. | Level 1 sends `null` and gets `null` back, since A offers no replay. |
 | `eventId`, as `evt_0042` | An identity: one upstream event, the same on every subscription it matches. | The client drops a second copy that arrives on the same subscription. | Level 1's occurrences. |
 | `webhook-id`, as `msg_2Lq8…` | An identity: one delivered message, the same on every retry of it. | The receiver drops a retry it already accepted. | Both levels (R14). |
 | The subscription `id`, as `sub_a3f1…` | An identity: one subscription, derived from its key. | The receiver reads it from `X-MCP-Subscription-Id` to pick the secret that verifies a delivery. | Both levels (R25). |
@@ -300,9 +310,9 @@ A lists the type in `events/list`, as Open Question 2 sketches it, carrying in `
 - **Nothing here is new.** It is SEP-3415's methods and webhook rules, an event type named as Open Question 2 sketches it, and B as the gateway in SEP-3415's forward-proxy deployment. That is Goal 1.
 - **Each change costs two round trips,** the notification and the read, and the notification says only that something changed.
 - **After an absence, `b` cannot tell what it missed.** A offers no replay, which SEP-3415 allows, so its cursors are `null` and a refresh restarts delivery from now. `b` re-reads every note it cares about.
-- **Replay would cost A state that state sync does without.** A would keep a log of the type's events in order, and a watermark for each subscription, as § *Cursors, versions and IDs* shows. A replay would still send every change, though `b` needs only the latest of each note. State-sync services that use webhooks keep no watermark, because the client's cursor comes from its own call: Dropbox's notification names only the account, and the app calls `files/list_folder/continue` with the cursor it stored. Level 2 needs neither a log of events nor a watermark for one resource, since the version `b` names on a refresh is its catch-up. What it does keep is each resource's earlier versions, which a log of events does not hold.
+- **A offers no replay, by choice.** A's store of versions (§ *The cast*) holds what a replay of this type would send, one occurrence per version. What replay would add is a watermark for each subscription, as § *Cursors, versions and IDs* shows, and a payload of every step: for note-43's four changes in Scenario 10, four occurrences, each followed by a read, where level 2 sends the one newest version. State-sync services keep no watermark either, because the client's cursor comes from its own call: Dropbox's notification names only the account, and the app calls `files/list_folder/continue` with the cursor it stored.
 
-Level 2 removes those last two costs.
+Level 2 removes the second read and the blind spot after an absence, without a watermark for each subscription.
 
 ### Level 2: resource state sync
 
@@ -311,7 +321,7 @@ Level 2 removes those last two costs.
 A resource is state, and a watcher wants to hold its newest version, not to witness every change. This is perhaps the biggest mental model difference from the Events SEP. Three edits while a receiver is down leave it needing only the third. These things follow:
 
 - **The server may coalesce.** A delivery still pending when a newer version lands is replaced by it, and a lost delivery is repaired by the next one for the same URI.
-- **The design keeps no log of events** (Larry, 2026-10-25). A client needs a resource's newest version, not the steps that led to it, so every catch-up is answered from the resources' own versions, and none replays changes in order. A keeps each resource's earlier versions for the `patch` form, but those are its values, not a record of events.
+- **Nothing in the design replays changes** (Larry, 2026-10-25). A client needs a resource's newest version, not the steps that led to it, so every catch-up reads each resource's newest version past what the client holds, from A's store of versions (§ *The cast*).
 - **One resource needs only versions,** never a cursor, since a version already says which state a client holds (§ *Cursors, versions and IDs*). A collection's catch-up adds a change cursor, as § *Collections* shows.
 - **The server never stores a delivery position per subscription** (Larry, 2026-10-21). A subscription's record is written when it is created and when it is refreshed, and § *Decisions* gives the reasons.
 - **Retry queue status per subscription is kept in memory, not storage.**
@@ -319,13 +329,13 @@ A resource is state, and a watcher wants to hold its newest version, not to witn
   - **How long it runs:** a few attempts with backoff over no more than 10 to 15 minutes, as SEP-3415 bounds them, which puts it with Slack's and Dropbox's short retries. Timers keep a Durable Object alive that long at compatibility dates from 2026-10-01, as Lumenize measured, so retries need no alarm and no write.
   - **What repairs a drop:** a delivery whose retries run out, or that an eviction or restart drops, is repaired at the subscriber's next refresh. A webhook POST wakes a hibernating gateway, so B rarely misses one. A client behind a gateway misses more when it sleeps, and catches up by refreshing when it reconnects.
   - **The schedule is a setting of A's,** which the page sets for the demo, as § *The cast* says.
-- **A refresh is the catch-up:** the subscriber's own call repairs any number of misses, as Scenarios 5 and 7 show.
+- **A refresh is the catch-up:** the subscriber's own call repairs any number of misses, as Scenarios 5 and 7 show. What its result carries is the caller's choice each time, by `catchUp`, independent of the subscription's form (Larry, 2026-10-25). `notify`, the default, names the current version, `full` adds the contents, and `patch` sends a patch from the version the caller names. So a `notify` subscriber can still ask for a patch when it reconnects, and A's catch-up never depends on a subscription's form.
 
 #### Scenario 3: a first subscription, from nothing
 
 *In sep-notes.md: R5, R8, R22 and R24.*
 
-At 15:00, after the Wipe, `a` writes note-42 again, as `v1`. `b` connects to B at `wss://.../gateway/B/ws/b`, registers a secret, and subscribes in the `full` form, holding nothing:
+At 15:00, after the Wipe, `a` writes note-42 again, as `v1`. `b` connects to B at `wss://.../gateway/B/ws/b`, registers a secret, and subscribes in the `full` form, holding nothing, asking for the contents in the result too:
 
 ```jsonc
 // b → B, first, over b's WebSocket: this prototype's own message
@@ -336,6 +346,7 @@ At 15:00, after the Wipe, `a` writes note-42 again, as `v1`. `b` connects to B a
   "params": {
     "uri": ".../server/A/notes/inbox/note-42",
     "form": "full",            // the contents in each delivery; notify if omitted
+    "catchUp": "full",         // and in this result
     "delivery": {
       "url": ".../gateway/B/hooks/b",       // B's URL for b, not b's own
       "secret": "whsec_<the same secret>" },
@@ -355,7 +366,7 @@ Before answering, A verifies that the webhook URL wants deliveries, by SEP-3415'
                   "text": "{\"title\":\"Buy milk\"}" } ] }
 ```
 
-- **The result is `b`'s first copy.** It names `v1` and carries the contents, so one call both subscribes and reads. In level 1, `b` subscribed and then read, and the read named no version.
+- **The result is `b`'s first copy.** It names `v1` and carries the contents, since the request asked for them, so one call both subscribes and reads. In level 1, `b` subscribed and then read, and the read named no version.
 - **`b` holds nothing until this result arrives,** which is why its request names no version.
 
 #### Scenario 4: a change it hears about
@@ -392,7 +403,7 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
 ```jsonc
 // b → A, at 15:20, before the 16:00 grant runs out
 "params": { "uri": ".../server/A/notes/inbox/note-42", "form": "full",
-            "version": "v2",
+            "catchUp": "full", "version": "v2",
             "delivery": { "url": ".../gateway/B/hooks/b", "secret": "whsec_..." } }
 // A → b
 { "resultType": "complete", "id": "sub_a3f1c8e2b0d49f7e",
@@ -400,7 +411,7 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
   "version": "v2" }                          // equal to b's: no contents, no news
 ```
 
-- **A refresh is neither a push nor a read.** It is the subscriber's own call, it extends the subscription, and its result says what is current, with the contents only when the subscriber's version differs. Scenario 7 shows that case.
+- **A refresh is neither a push nor a read.** It is the subscriber's own call, it extends the subscription, and its result says what is current, with the contents only when the subscriber's version differs and it asked for them. Scenario 7 shows that case.
 - **A subscriber may refresh whenever it suspects it missed something,** not only when a grant is running out. `b` refreshes every subscription when it reconnects to B.
 
 #### Scenario 6: changes it never sees
@@ -439,7 +450,7 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
 ```jsonc
 // b → A: the refresh on reconnecting
 "params": { "uri": ".../server/A/notes/inbox/note-42", "form": "full",
-            "version": "v4", ... }
+            "catchUp": "full", "version": "v4", ... }
 // A → b
 { "resultType": "complete", "id": "sub_a3f1c8e2b0d49f7e",
   "refreshBefore": "2026-10-21T17:05:00Z",
@@ -543,7 +554,7 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
 - **Each member comes back once, at its newest version.** note-43 was created, edited twice and deleted after `c1`, and `b` gets only the deletion. A answers from each member's newest version, so nothing replays the steps between, as § *Only the newest version matters* says.
 - **Deliveries carry no cursor,** so note-43's delivery at 16:15 left `b`'s cursor at `c1`. A cursor in a delivery would have to be a watermark, since deliveries overlap. A refresh can therefore return a member `b` already holds, and `b` skips it by its version.
 - **`c1` and `c6` are opaque.** A server that stamps its versions from one counter MAY use the version as the cursor, as Kubernetes stamps an object's and a list's `resourceVersion` from etcd's one revision. `b` never compares either (R36).
-- **A cursor A can no longer serve gets every member, with `reset: true`.** A forgets deletions older than its cut-off window, so for an older cursor it cannot say what was deleted. It lists every member that exists instead, and `b` drops any it holds that the reset does not list. A never answers a stale cursor with `410`, which SEP-3415 gives a receiver's answer.
+- **A cursor A can no longer serve gets every member, with `reset: true`.** A forgets deletions older than its cut-off window, so for an older cursor it cannot say what was deleted. It lists every member that exists instead, and `b` drops any it holds that the reset does not list.
 - **A long catch-up comes in pages.** A result with `hasMore: true` stops partway, and `b` refreshes again with its `cursor`, as `events/poll` drains a backlog with `hasMore`. A reset pages the same way, its cursor then a place in the listing.
 - **This is how state-sync services catch up.** Dropbox's `cursor`, Drive's `pageToken`, Calendar's `syncToken`, Gmail's `historyId` and Graph's `deltaLink` are each a cursor the client holds. Dropbox, Calendar, Gmail and Graph answer one too old for them by having the client start over, as a reset does here.
 
@@ -562,7 +573,8 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
 For a resource whose contents are JSON, a delivery can carry an RFC 7396 merge patch in place of the whole value. The patch goes from the resource's previous version to its new one, and names both.
 
 - **A delivery patches from the resource's previous version,** since A has no record of what `b` acknowledged (§ *Only the newest version matters*).
-- **A refresh patches from the version `b` names,** while A still keeps it, and otherwise carries the full contents. So `b` applies a delivered patch only when it holds the version the patch starts from, and refreshes when it does not.
+- **A catch-up asked for as `patch` patches from the version `b` names,** or for a collection from each member's version at the cursor, and carries the full contents when A no longer keeps that version or the contents are not JSON. A patch names the version it starts from, so `b` applies one only when it holds that version, and otherwise catches up.
+- **HTTP's delta encoding works the same way.** RFC 3229's `A-IM` request header says which deltas a client accepts, and a `226 IM Used` response carries one.
 - **The predecessor designed the rest in detail,** and the mining pass brings its rules across.
 
 #### Resources without an `https` URI, in a later phase
@@ -580,7 +592,7 @@ A serves its lists a second way for this phase, under a scheme of its own, as `l
 
 #### What the extension adds to the wire
 
-Everything about delivering a webhook is SEP-3415's. The extension adds a capability, two methods, their parameters and results, and the body a change delivers, written in the spec's style and built on `schema.ts`'s own types. The `patch` form adds a variant to `ResourceChange` in its phase.
+Everything about delivering a webhook is SEP-3415's. The extension adds a capability, two methods, their parameters and results, and the body a change delivers, written in the spec's style and built on `schema.ts`'s own types. The `patch` form adds a variant to `ResourceChange`, and a patch to the result, in its phase.
 
 A declares the extension in `server/discover`, which is how `b` learns that A offers `full` (R1):
 
@@ -598,7 +610,8 @@ interface ResourceWebhooksSettings {    // under capabilities.extensions
   forms: ("notify" | "full" | "patch")[];
 }
 type ResourceWebhookSubscribeParams = RequestParams & SubscriptionTarget & {
-  form?: "notify" | "full";             // notify when omitted
+  form?: "notify" | "full";             // deliveries' form: notify if omitted
+  catchUp?: "notify" | "full" | "patch"; // this result's form: notify if omitted
   version?: string;                     // one resource: the version held
   cursor?: string;                      // a collection: the last result's cursor
   delivery: { url: string; secret: string };
@@ -609,7 +622,7 @@ interface ResourceWebhookSubscribeResult extends Result {
   refreshBefore: string | null;
   version?: string;                     // one resource: its current version
   deleted?: true;                       // that version deleted the resource
-  contents?: (TextResourceContents | BlobResourceContents)[];  // full form
+  contents?: (TextResourceContents | BlobResourceContents)[];  // catchUp full
   changes?: ResourceChange[];           // a collection: each member changed
                                         // since the cursor, at its newest version
   cursor?: string;                      // a collection: where this result stops
@@ -682,6 +695,7 @@ type ResourceChange = { uri: string } & (
 - **Tasks.** Open Question 6 and ext-tasks #24 ask for the same thing on task state, and a task exposed as a resource gets level 2 unchanged.
 - **A mirror,** where a subscriber keeps copies at the server's versions and serves them to readers of its own, as the predecessor designed. The design covers a client behind a gateway instead.
 - **The other two flavors,** and the Lumenize port, whose notes stay in the predecessor's `tasks/lumenize-port.md`.
+- ⚠️ Design consideration: **a JSON Schema per type, in the template's `_meta`.** The Lumenize port will add one (Larry, 2026-10-25). Its use is less as a safety check, since one party writes both sides, than as a feedback loop: a client checks its own inputs, such as a UI's, against the same schema the server enforces, before it sends them.
 
 ## Open questions
 
@@ -701,12 +715,13 @@ None.
 | The server and the gateway are Durable Object classes of their own, `Server` and `Gateway`, each composing a module for its role (Larry, 2026-10-21) | One class for both: it blurs the line SEP-3415 draws between a server and a webhook endpoint, suggests that a server hosts its clients' gateways, carries storage the gateway never uses, and ties the gateway to the notes so it could not also receive deliveries from an Events server. |
 | The Worker routes with a copy of `routeDORequest` in `src/vendor/lumenize-routing/`, passing `bindings`, `cors`, `onBeforeRequest` and `onBeforeConnect` (Larry, 2026-10-25) | A router of a dozen lines: the `Origin` check and the edge's token check would be written again, and the handler would no longer match the Lumenize port's. Depending on `@lumenize/routing`: this repo depends on no Lumenize package. Leaving B's socket open, with an id `b` mints for itself: enough while the notes are open, but each later flavor would likely add the check, and a library's feature that goes unused now is usually wanted later (Larry, 2026-10-25). One token naming both A and B as its audience: either could replay it at the other. |
 | The leg between the gateway and its client is a WebSocket in this prototype, and outside both SEPs (Larry, 2026-10-21) | Specifying it: SEP-3415 leaves the channel to the endpoint, and stdio or anything else that carries a message each way would serve. |
-| Level 1 offers no replay: its cursors are `null`, as SEP-3415 allows for a type without one (Larry, 2026-10-25) | Replay from an in-memory buffer: a log of events and a watermark per subscription, built only to show that state sync does without them. Replay from a durable log: a storage write for every change. |
+| Level 1 offers no replay: its cursors are `null`, as SEP-3415 allows for a type without one (Larry, 2026-10-25) | Replay from A's store of versions: a watermark for each subscription, and every step sent where a client needs each resource's newest version, built only to show that state sync does without them. |
 | This extension leaves polling out, for now (Larry, 2026-10-20) | A poll method: an `https` resource is already polled with a conditional `GET`, and level 1's type could offer `events/poll`, though A keeps no log of events to serve it from. |
 | Collections are in scope: a folder, a URI template, or every listed resource (Larry, 2026-10-20) | Deferring them: they raise the questions only an implementation answers, which is what a prototype is for. |
 | A serves one resource template per type, `.../server/A/notes/{+path}` and `.../server/A/lists/{+path}`, each with its own description and `mimeType`, and folders nest to any depth (Larry, 2026-10-25) | One template for every type, `.../server/A/{type}{/path*}`: RFC 6570 expands it, but the official TypeScript SDK matches `{/path*}` as one comma-separated segment that is never optional, and one template could give no single description or `mimeType`. Three templates by depth: nested folders would still need `{/folder*}`, and none would describe a type. |
 | A collection's refresh returns each member changed since the cursor of the subscriber's last result, once, at its newest version, deletions included. Only results carry the cursor, and one A can no longer serve gets every member, marked `reset` (Larry, 2026-10-25) | The whole member list on every catch-up: as big as the collection each time. A log of events to replay: a client needs each member's newest version, not the steps. Versions that must sort, as Kubernetes' `resourceVersion` does: an `https` resource's version is its `ETag`, which nothing can require to sort, though a server MAY use one value for both (R36). A cursor in each delivery: it would need a watermark. HTTP `410` for a stale cursor: SEP-3415 gives a receiver's `410` its own meaning. |
 | A long catch-up pages with its cursor and `hasMore`, as `events/poll` does, and a reset pages the same way (Larry, 2026-10-25) | A second cursor for a reset's pages, as `resources/list` pages: two fields where one opaque value serves. |
+| A catch-up's form is the caller's, chosen per call with `catchUp`, independent of the subscription's `form` (Larry, 2026-10-25) | Catch-ups in the subscription's form: a `notify` subscriber could never get a patch when it reconnects, and A's catch-up would depend on each subscription's form. |
 | The names are the extension identifier `io.modelcontextprotocol/resource-webhooks`, the methods `resources/webhooks/subscribe` and `resources/webhooks/unsubscribe`, and the target `listed`, and the PR asks whether the methods want a prefix of their own (2026-10-25) | A prefix of the extension's own, as SEP-3371's example names a method `com.example/search` after its extension: SDKs match method names exactly, so nothing requires one, while `resources/` belongs to the core specification, which is why the PR asks. |
 | Subscribing requires an authenticated principal, as SEP-3415 does, from MCP's OAuth flow with an authorization server that verifies no identity, as Peter's reference server has (Larry, 2026-10-20) | Anonymous callers sharing one principal: any of them could unsubscribe another or replace its secret. A login endpoint handing out a random token: the same idea outside the OAuth flow every MCP client already speaks. Requiring the old secret to unsubscribe or rotate: a client that lost its secret could only wait out the TTL, and the secret, held by gateways, would become a credential. |
 | Endpoint verification is cached per `(principal, delivery.url, delivery.secret)` (Larry, 2026-10-20) | Per `(principal, url)`, as SEP-3415 does: a principal that verified a webhook URL once could subscribe it again with a secret the receiver never held, and flood it. Per `(url, secret)` alone: two principals holding one secret would share a verification, which SEP-3415 rules out. |
