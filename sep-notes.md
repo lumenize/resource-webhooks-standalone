@@ -17,10 +17,7 @@ These notes are for the design's second level, resource state sync. The first le
 - **N1. Coalesced retries, in order per URI (R12, R13).** SEP-3415 describes retrying each event independently, with deliveries that may arrive out of order. It requires neither: it caps retries, sets no minimum, and lets a server abandon a delivery. Here a newer version replaces a pending older one, so a URI's deliveries arrive in version order. Peter agreed on SEP-3415's thread, on 2026-10-16, that an event type may coalesce, and that coalescing should not set `truncated`.
 - **N3. The subscription `id` is a keyed hash (R25),** where SEP-3415 asks only that it be deterministic.
 - **N4. A body too large for the `full` form goes as `notify` (R27),** keeping every body within SEP-3415's 256 KiB delivery profile.
-- **N5. A receiver's `410` stops one version (R28).** SEP-3415 makes it non-retryable for that delivery and leaves the subscription unaffected. Under coalescing, a delivery is one version, so later versions still go.
 - **N6. Contents travel only on request (R5, R10).** SEP-3415's § *Payload minimality* says "Servers SHOULD keep event payloads minimal: enough to identify and triage the event, and not the full content." The default form, `notify`, does, naming only the resource and its version. A subscriber that asks for `full`, for its deliveries or for a catch-up, gets the contents, because sparing it a read is the point of resource state sync, and a server need not offer `full` at all (R1). A SHOULD leaves room for a reason that is understood, and here the subscriber gives it by asking. SEP-3415's own Open Question 6 sketches a task event whose payload may carry the task's `result`.
-
-Everything else in R17 is a substitution: this extension's methods, key and body in place of SEP-3415's.
 
 ## The capability
 
@@ -39,7 +36,6 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 - **R6.** The subscription key is `(principal, delivery.url, target)`, with `delivery.url` compared as an exact string, and the target compared as its kind and its value (`uri`, `uriTemplate` or `listed`). A request whose key matches an existing subscription refreshes it: the server grants a TTL again, and replaces `form` and `delivery.secret`.
 - **R7.** A server MUST refuse a `uri` it could never serve, such as one with a scheme it does not serve or one outside all its templates, with the error `resources/read` gives for it. A `uri` that names a deleted resource is not refused, by R11. It MUST refuse a `form` it did not declare with SEP-3415's `Unsupported`, with `data` `{"feature": "form", "value": ...}`.
 - **R8.** The result MUST carry `id` and `refreshBefore`. For a `uri` target naming a resource that is not a collection, it MUST also carry that resource's current `version`, with `deleted: true` when that version deleted it, and, when the request's `catchUp` is `full` and its `version` is absent or differs, the resource's `contents`, as `resources/read` would return them. For a collection, it carries what R32 to R35 say.
-- **R9.** A server MUST end a subscription with a `terminated` envelope when its principal can no longer read the resources it covers.
 
 ## Delivering a change
 
@@ -51,7 +47,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 - **R15.** A client SHOULD ignore a delivery naming a version it already holds, and SHOULD pass the version it holds of the resource a `uri` target names in `version` on every refresh.
 - **R26.** A `ResourceChange` MUST NOT carry a top-level `type`, so that SEP-3415's rule tells it apart from a control envelope.
 - **R27.** In the `full` form, a server MUST deliver a change in the `notify` form instead when its body would exceed the 256 KiB bound that SEP-3415's delivery profile recommends (N4).
-- **R28.** A receiver's `410 Gone` stops the server retrying that version only, as SEP-3415 leaves the subscription unaffected. The server MUST still deliver the resource's later versions (N5).
+- **R28.** A receiver's `410 Gone` stops the server retrying that version only, as SEP-3415 leaves the subscription unaffected. The server MUST still deliver the resource's later versions (R17).
 - **R30.** A receiver that acts for a client, as a gateway does in SEP-3415's forward-proxy deployment, MUST make each `ResourceChange` it accepts available to that client whole, as SEP-3415 requires of `cursor` and `eventId`.
 - **R31.** A client that may have missed deliveries, for example because its gateway could not reach it, SHOULD refresh each of its subscriptions.
 
@@ -61,7 +57,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Taken from SEP-3415 by reference
 
-- **R17.** Webhook delivery follows SEP-3415's § *Webhook-Based Delivery*, at commit b0efd11, with these substitutions: this extension's methods for `events/subscribe` and `events/unsubscribe`, R6's key for SEP-3415's subscription key, a `ResourceChange` for an `EventOccurrence`, and a change's `uri` and `version` for an event's `eventId`. It narrows it as N1 and N3 to N6 say. SEP-3415's `cursor`, `maxAgeMs`, `truncated` and `gap` envelope never apply: one resource needs only its version, and a collection uses this extension's own `cursor` (R32 to R35), with `reset` (R34) in place of `truncated`.
+- **R17.** Webhook delivery follows SEP-3415's § *Webhook-Based Delivery*, at commit b0efd11, with these substitutions: this extension's methods for `events/subscribe` and `events/unsubscribe`, R6's key for SEP-3415's subscription key, a `ResourceChange` for an `EventOccurrence`, a change's `uri` and `version` for an event's `eventId`, and one version of one URI for the delivery that SEP-3415's `410` rule stops, so later versions still go (R28). It also takes SEP-3415's § *Authorization* by reference, re-verifying at delivery time, with the target in place of an event type and its arguments, and R39 adds what that means for a collection. Everything else is narrowed as N1, N3, N4 and N6 say. SEP-3415's `cursor`, `maxAgeMs`, `truncated` and `gap` envelope never apply: one resource needs only its version, and a collection uses this extension's own `cursor` (R32 to R35), with `reset` (R34) in place of `truncated`.
 - **R29.** This extension uses SEP-3415's general-purpose error codes as SEP-3415 defines them: `Forbidden` for a principal refused or missing, `ResourceExhausted` for a server limit, `CallbackEndpointError` for a callback that fails verification or cannot be reached, plus `Unsupported` (R7) and `NotFound` (R16).
 - **SEP-3415's § *SSRF prevention* is met by the platform on Cloudflare Workers, as far as one measurement shows.** SEP-3415 asks a server to check a callback's resolved address at delivery time and connect to that address. A Worker's `fetch()` can do neither, since it takes no address and offers no DNS lookup.
   - **Measured on 2026-10-25,** at compatibility date 2026-10-01 with `global_fetch_strictly_public`, by a test Worker fetching fixed sslip.io and nip.io names that each resolve to one address. Cloudflare answered with its own error page for an address in every range SEP-3415 names: 127.0.0.1, 10.0.0.1, 172.16.0.1, 192.168.0.1, 169.254.169.254, `::1`, `fc00::1` and `fe80::1`. It did the same for 0.0.0.0, 100.64.0.1, 198.18.0.1, 198.51.100.1, 203.0.113.1, 224.0.0.1, 240.0.0.1, 255.255.255.255, `2001:db8::1`, `64:ff9b::a00:1` and `::ffff:127.0.0.1`, for the private IP literals 10.0.0.1 and 127.0.0.1, and for `localhost`. Google's address through the same two services was reached.
@@ -77,6 +73,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 - **R19.** A `uriTemplate` target covers every resource whose URI matches the template, and their sub-resources. A simple `{name}` expression matches exactly one path segment, and a reserved expansion `{+name}` matches one or more characters, slashes included. RFC 6570 defines expansion, not matching, so a server MAY refuse a template with any other expression, with `Unsupported`.
 - **R20.** A `listed: true` target covers every resource `resources/list` returns to the subscription's principal.
 - **R38.** A collection is a resource whose `resources/read` returns its members as entries with URIs of their own. Which of its URIs are collections is the server's to decide, and a subscription's kind MUST NOT change during its life, whatever its number of members. A `uriTemplate` or `listed` target is always a collection.
+- **R39.** For a collection, a server MUST deliver only the members the principal may read, and MUST end the subscription, with SEP-3415's `terminated` envelope, only when the principal may read none of them, or, for a `uri` target, may no longer read the collection itself. The prototype does not exercise this or SEP-3415's re-verification, since everyone may read A's notes, and builds no revocation only to trigger it.
 - **R32.** For a collection, the result MUST carry a `cursor`, and a refresh MAY name the `cursor` of an earlier result. The result's `changes` MUST then hold every covered resource whose newest version came after that cursor, once each and at its newest version, as a `ResourceChange` in the form the request's `catchUp` names, with a deleted one as R11 delivers it. Without a cursor, `changes` MUST hold every covered resource that exists. A client SHOULD name the cursor of its last result on every refresh.
 - **R33.** A delivery MUST NOT carry a cursor, since deliveries may overlap and arrive out of order.
 - **R34.** When a server can no longer tell which covered resources changed after the named cursor, it MUST answer as though none were named, and set `reset: true`. A client that receives `reset: true` MUST treat as deleted every resource it holds under the target that no page of the reset lists. A server MUST NOT answer a stale cursor with an error.
@@ -85,7 +82,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Who may subscribe
 
-- **R22.** Both methods MUST be called with an authenticated principal, as SEP-3415 defines it. A server MUST refuse a principal that may not read every resource the target covers, with `Forbidden`.
+- **R22.** Both methods MUST be called with an authenticated principal, as SEP-3415 defines it. A server MUST refuse, with `Forbidden`, a principal that may not read the resource a `uri` target names. For a collection, it filters the members instead (R39).
 - **R25.** A server MUST derive a subscription's `id` from its key with a keyed hash, so that a logged `id` cannot confirm a guessed principal (N3).
 
 ## Pending
@@ -105,6 +102,8 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Withdrawn
 
+- **R9** (a MUST to end a subscription whose principal can no longer read what it covers), withdrawn 2026-10-25 in favour of SEP-3415's § *Authorization*, which R17 takes by reference, and R39.
+- **N5** (a receiver's `410` stops one version), moved 2026-10-25 into R17's substitutions, since it follows from R14 and SEP-3415's `410` rule.
 - **N2 and R24** (verification cached per `(principal, delivery.url, delivery.secret)`), withdrawn 2026-10-25: a verified principal can point a URL at any number of targets with no new handshake either way, and a challenge on rotation would fail a stock Events receiver.
 - **R21** (a version for a whole collection), withdrawn 2026-10-25 when a collection's catch-up came to name a cursor.
 - **R23** (callers without credentials share one anonymous principal), withdrawn 2026-10-20 when subscribing came to require an authenticated principal.

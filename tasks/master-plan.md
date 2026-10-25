@@ -561,7 +561,7 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
 
 #### Who may subscribe
 
-**Subscribing requires an authenticated principal, as SEP-3415 does, and permission to read every resource the target covers.** A call that fails either is refused with `Forbidden`, as SEP-3415 refuses it. The principal comes from MCP's own OAuth flow, so every MCP client already knows how to get one. Here it is `b`, which holds the token. Level 1 follows the same rule, since it is SEP-3415's.
+**Subscribing requires an authenticated principal, as SEP-3415 does, and permission to read the resource a `uri` target names.** A call that fails either is refused with `Forbidden`, as SEP-3415 refuses it. A collection delivers only the members its principal may read, and SEP-3415's re-verification at delivery time ends a subscription whose principal has lost access (R22, R39). The principal comes from MCP's own OAuth flow, so every MCP client already knows how to get one. Here it is `b`, which holds the token. Level 1 follows the same rule, since it is SEP-3415's.
 
 - **The prototype's authorization server is scaffolding, and verifies no identity,** as the authorization server in front of Peter's reference server does. Anyone can get a token, so access to the notes stays open, but each client is its own principal, and no caller can unsubscribe another or replace its secret.
   - **Getting a token.** A client registers at `/register`, a consent step approves at once, so that a script and the tests need no clicks, and the client exchanges the code with PKCE for a token. There are no refresh tokens, no revocation and no scopes. The Worker serves the authorization server's metadata at its origin's root.
