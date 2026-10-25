@@ -8,7 +8,7 @@
 - **Each Lumenize Resource is exposed as an MCP resource.** A resource's URI and contents are what this design syncs, so a Lumenize Resource maps onto one directly.
 - **The server's shape.** `routeDORequest` carries a request to its object, `onBeforeRequest` and `onBeforeConnect` check tokens at the edge, and a table of handlers keyed by JSON-RPC method name is bundled for scoped mesh nodes.
 - **The server role goes first.** The prototype's `Server` role module is adopted into Lumenize before anything else, and its `Gateway` role maps onto Lumenize's `ClientGateway`.
-- **The role modules run over Mesh.** They take parsed JSON-RPC messages and deliveries, not `Request`s, so the port can compose them into a Lumenize node.
+- **The role modules run over Mesh.** The server role takes parsed JSON-RPC messages, and the gateway role takes a delivery's headers and raw bytes, since SEP-3415 signs the bytes as received, so the port can compose either into a Lumenize node with no `Request` involved.
 - **A JSON Schema per type, in each resource template's `_meta`.** The port adds one, so a client checks its own inputs, such as a UI's, against the same schema the server enforces, before it sends them (Larry, 2026-10-25).
 
 ## What changes in the port

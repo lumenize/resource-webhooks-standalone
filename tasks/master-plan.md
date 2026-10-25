@@ -110,14 +110,14 @@ block-beta
   - **From A across to B by webhook:** an Events occurrence at level 1, and at level 2 a change in one of three forms. `notify` names the new version, `full` adds the contents, and `patch` carries a merge patch from the previous version.
   - **From B down to `b` by a channel neither SEP specifies:** a WebSocket here, though stdio, a CLI or anything else would do.
 - **`b` subscribes with A directly, which is SEP-3415's forward-proxy deployment.** `b` calls A, naming B's webhook URL as the place to deliver, since in SEP-3415 "the callback URL does not need to be the client itself". This example hosts B in the same Worker project as A, which a real forward-proxy deployment would not.
-- **The Worker** at `https://resource-webhooks-standalone.transformation.workers.dev`, a provisional name until the first deploy, hosts both A and B, and `...` stands for it in the examples. Each later flavor of this SEP, if we build them, gets a Worker project of its own, named after its repo, so each deploys alone. Its `compatibility_flags` include `global_fetch_strictly_public`, so A's webhook POST to B, on the Worker's own host, goes out and comes back through Cloudflare's front door, as a POST to any receiver would. Without the flag, Cloudflare refuses that fetch with error 1042.
-- **A and B are Durable Object classes of their own, `Server` and `Gateway`.** Each composes a module that holds its role, so the Lumenize port can compose the same modules into a Lumenize node, as Lumenize composes its `ClientGateway` into the scoped node that hosts it.
+- **The Worker** at `https://resource-webhooks-standalone.transformation.workers.dev`, a provisional name until the first deploy, hosts both A and B, and `...` stands for it in the examples. Each later flavor of this SEP, if we build them, gets a Worker project of its own, named after its repo, so each deploys alone. Its `compatibility_flags` include `global_fetch_strictly_public`, so A's webhook POST to B, on the Worker's own host, goes out and comes back through Cloudflare's front door, as a POST to any receiver would. Cloudflare's docs say that without the flag the fetch fails with error 1042, but a Lumenize measurement saw a Durable Object reach its own workers.dev URL without it, so phase 5 measures A's case.
+- **A and B are Durable Object classes of their own, `Server` and `Gateway`.** Each composes a module that holds its role, so the Lumenize port can compose the same modules into a Lumenize node, as Lumenize composes its `ClientGateway` into the scoped node that hosts it. The `Server` role takes a parsed message and a verified principal, with `sql`, `send(url, headers, rawBody)` and `waitUntil` passed in. The `Gateway` role takes a delivery's headers and raw bytes, since SEP-3415 signs the bytes as received, and returns a status, with `secretFor(client)` and `forward(client, message)` passed in. A check fails if a role module touches `Request`, `WebSocket`, `DurableObjectState`, `cloudflare:workers` or the global `fetch`.
 - **The Worker routes with a copy of `routeDORequest`, in `src/vendor/lumenize-routing/`.** It is copied from `@lumenize/routing`, six files and about 790 lines, with its `@lumenize/debug` logging removed, relicensed under Apache-2.0 and listed in `ATTRIBUTIONS.md`. The Worker imports it by relative path, so its `fetch` handler reads as the Lumenize port's would, and passes it four options, which the route table below applies:
   - **`bindings`,** so a path such as `/server/A/...` or `/gateway/B/...` can reach only a `Server` or a `Gateway`.
-  - **`cors`, naming the Worker's own origin.** A request whose `Origin` is present and not that origin is refused with `403` before any object wakes, as MCP's Streamable HTTP transport requires: servers "MUST validate the `Origin` header on all incoming connections to prevent DNS rebinding attacks". A request with no `Origin`, such as A's webhook POST to B, passes. The check covers B's socket too, since `routeDORequest` runs it before either hook. `applyCorsPolicy` answers a preflight `OPTIONS` from another origin with `204` and no CORS headers, so the Worker turns that into `403` on A's MCP endpoint, as the transport requires, and the copy's attribution notes the change.
+  - **`cors`, naming one allowed origin per environment,** a constant never computed from the request: the deployed Worker's own, `http://localhost` for the conformance suite's local run, and `https://localhost:<port>` for the browser test. A deployed Worker never allows an `http://` origin. A request whose `Origin` is present and not that origin is refused with `403` before any object wakes, as MCP's Streamable HTTP transport requires: servers "MUST validate the `Origin` header on all incoming connections to prevent DNS rebinding attacks". A request with no `Origin`, such as A's webhook POST to B, passes. The check covers B's socket too, since `routeDORequest` runs it before either hook. `applyCorsPolicy` answers a preflight `OPTIONS` from another origin with `204` and no CORS headers, so the Worker, not the vendored copy, turns that into `403` on every route, as the transport requires.
   - **`onBeforeRequest`, checking A's tokens at the edge,** as § *Who may subscribe* says.
   - **`onBeforeConnect`, checking `b`'s token for B's socket,** as § *The leg between the gateway and its client* says.
-- **One table holds every route.** `onBeforeRequest` and `onBeforeConnect` see every request and every upgrade, so each decides by the path, as the last column says. The authorization server's routes are the ones `routeDORequest` does not match, and the Worker hands them to A by hand, after the same `Origin` check, `applyCorsPolicy`, which the copy exports.
+- **One table holds every route, and the edge denies by default.** `onBeforeRequest` and `onBeforeConnect` see every request and every upgrade, so each decides by the path, as the last column says, before any stub is made. A path naming any instance but A under `/server` or B under `/gateway` answers `404`, as does a path and method the table does not list, and a bare `/server` with no instance. After it verifies a token, the edge sets the principal in a claims header, `x-rw-principal`, and strips that header from every request it did not verify. The Worker serves its static assets with `run_worker_first` for every route the table lists, so a browser's navigation to `/authorize` or to a note reaches it. The authorization server's routes are the ones `routeDORequest` does not match, and the Worker hands them to A by hand, after the same `Origin` check, `applyCorsPolicy`, which the copy exports.
 
 | Path | Request | Handled by | Needs |
 |---|---|---|---|
@@ -158,16 +158,16 @@ block-beta
     | `c5` | note-44 | `v1` | |
     | `c6` | note-43 | `v4` | yes |
 
-    A cursor is a stamp. A collection's catch-up from `c1` reads each resource's newest row past it, `c6` and `c5`, and a patch reads the row of the version a client names. A drops rows older than its cut-off window as it writes, with no alarm, a setting of A's, a day by default, which the tests shorten to reach a reset, but keeps each live resource's newest row. It expires a subscription the same way, checking its grant lazily at delivery and sweeping expired ones when it wakes. A cursor older than the rows A dropped gets a reset.
+    A cursor is a stamp. A collection's catch-up from `c1` reads each resource's newest row past it, `c6` and `c5`, and a patch reads the row of the version a client names. The stamp is SQLite's rowid, with each insert made before any pruning in one synchronous block, so a pruned top row never lends its stamp to the next write, at no write beyond the row itself. Rows hold paths relative to A's root, such as `/notes/inbox/note-42`, and a folder's members are a range on them, `path >= '/notes/inbox/' AND path < '/notes/inbox0'`, since DO SQLite refuses a `LIKE` pattern over 50 bytes. A body over 1 MiB is refused with `413`, well under SQLite's 2 MB row limit. Subscriptions sit in a table keyed `(targetKind, target, principal, url)` `WITHOUT ROWID`, so a write finds the subscriptions covering a URI by its key, and a refresh is one write. A drops rows older than its cut-off window as it writes, with no alarm, a setting of A's, a day by default, which the tests shorten to reach a reset, but keeps each live resource's newest row. It expires a subscription the same way, checking its grant lazily at delivery and sweeping expired ones when it wakes. A tells that a cursor is older than the rows it dropped with no write: stamps are dense, so when fewer rows lie past the cursor than the newest stamp less the cursor, a row past it was dropped, and the cursor gets a reset.
   - **A list is the second type,** `{ "title": "Groceries", "items": ["oat milk"] }`, so that a template can match across types.
 - **B is a gateway, and stores nothing.** It receives webhooks for each of its clients at a URL of that client's own, `/gateway/B/hooks/{client}`, the path shape SEP-3415's own examples use, and passes each one down that client's WebSocket. Each socket carries its client's secret in its attachment, so B writes nothing, as Lumenize's Gateway writes nothing. B never calls A, and holds no principal there.
   - **SEP-3415 uses both words, gateway and forward proxy, sometimes in one paragraph,** as Appendix A's webhook mode does. This design says gateway. Unlike the proxy of § *Webhook-Based Delivery*, which serves events to its clients by poll or push and so buffers them, B passes each delivery straight down its client's socket and keeps none. Lumenize's Gateway also carries a client's calls up to the nodes, and this one carries only deliveries down, since `b` calls A itself.
   - **Nothing in B knows about notes,** and the same gateway serves both levels, since an Events occurrence and a level-2 change arrive with the same headers, signatures and verification.
 - **`b` is an MCP client of A that cannot receive a webhook,** as Claude Code on a laptop or a browser tab cannot. It holds the token, subscribes, refreshes, and keeps a copy of each resource it watches, at A's version. It can be a script in the early phases, but for the demo it runs in the browser, so its own messages are recorded where the demo shows them.
-- **The demo shows every message, and what each party holds.** `a` and `b` run in the browser, so their records are local to the page. A and B run on Cloudflare, so they report their contents and the messages they send and receive to the page via a WebSocket back channel.
-- **The page has two controls of its own so far, outside both SEPs,** sent to A and B over the same back channel. Larry has rehearsed the first beats, which brought in the Wipe, and the page's other controls wait for rehearsal after the build (Larry, 2026-10-25). On a deployed Worker the controls need an operator token, held as a Worker secret, while the back channel's reports stay open to the page (Claude, 2026-10-25, while Larry was away):
-  - **The Wipe button empties all four parties between the levels.** A loses its notes, subscriptions, verification cache, pending retries and OAuth client registrations, and starts a new epoch, so it refuses every token issued for A before. B closes its sockets. `a` and `b` register with A again, and `b` drops its copies, gets a new token for B's socket, reconnects to B and registers a new secret. An old token for B's socket still opens one, but only for a client id A no longer knows, which receives nothing. The page clears the messages it shows.
-  - **A's retry schedule,** shown on screen: SEP-3415's bounds by default, and in the demo three attempts at 2, 4 and 8 seconds, so the audience sees a retry, and a newer version replacing a pending one, as they happen.
+- **The demo shows every message, and what each party holds.** `a` and `b` run in the browser, so their records are local to the page. A and B run on Cloudflare, so they report their contents and the messages they send and receive to the page via a WebSocket back channel. Reports are redacted at the source: a secret shows as `whsec_…(32 bytes)`, a token as its `sub` and `aud`, and a signature as `verified` or `failed`, and a control message is never reported.
+- **The page has two controls of its own so far, outside both SEPs,** sent to A and B over the same back channel. Larry has rehearsed the first beats, which brought in the Wipe, and the page's other controls wait for rehearsal after the build (Larry, 2026-10-25). The controls need an operator token, held as a Worker secret, and every control is refused when that binding is absent, with no separate deployed mode: local runs supply it in `.dev.vars`, and vitest in miniflare's `bindings`. Larry types the token into the page, which keeps it in `sessionStorage`, never in its assets or a URL, and A and B compare it in constant time and never report it. The back channel's reports stay open to the page (Claude, 2026-10-25, while Larry was away):
+  - **The Wipe button empties all four parties between the levels.** A loses its notes, subscriptions, verification cache and pending retries, and raises its epoch, which the Wipe never deletes, so it refuses every token and client registration issued before. B closes its sockets. `a` and `b` register with A again, and `b` drops its copies, gets a new token for B's socket, reconnects to B and registers a new secret. An old token for B's socket still opens one, but its client id is no longer registered, so it receives only what someone subscribes it to. The page clears the messages it shows.
+  - **A's retry schedule,** shown on screen, clamped to SEP-3415's bounds of 3 to 5 attempts over at most 15 minutes: those bounds by default, and in the demo three attempts at 2, 4 and 8 seconds, so the audience sees a retry, and a newer version replacing a pending one, as they happen.
 - **Versions behave as HTTP's `ETag`s do.** A version is the resource's strong `ETag`, written without its quotes: `v2` on this extension's wire, `"v2"` in an HTTP header. Clients compare versions only for equality. A's versions need not sort in time, though they may, and a server that knows its own versions sort MAY rely on that inside its implementation. In the examples they are short strings, `v1` and `v2`, and each level's examples count from `v1`. A's versions never repeat across a Wipe, since A mints them under its epoch, a count of Wipes, as `e2.v1`, and the page shows the short form.
 
 ```ts
@@ -179,10 +179,11 @@ interface List { title: string; items: string[]; }
 
 Neither SEP-3415 nor this extension says how a gateway reaches its client. SEP-3415 says only that the endpoint passes on what it receives "by whatever channel it uses". This prototype uses a WebSocket, since Durable Objects hold them cheaply. Stdio, or anything else that carries a message each way, would do.
 
-1. **`b` registers its secret first, on every connection,** with `{"secret": "whsec_..."}`, and B keeps it in the socket's attachment while the socket is open. The secret has to reach B before `b` subscribes, because A's verification challenge arrives at B while A is still handling the subscribe call. B answers that challenge itself, at once, from the secret it holds, without asking `b`.
-2. **B passes on each delivery whose signature verifies, answers `401` to one whose signature does not, and answers A straight away.** A send on a WebSocket does not wait for `b`, so B holds nothing while it answers. While `b`'s socket is closed, B answers `503`, one of the retryable answers SEP-3415 names for a receiver that is not ready.
-3. **B tracks nothing else.** A client that reconnects refreshes each of its subscriptions, so B never needs to know what it missed.
-4. **Who may connect is B's own business,** as it is any gateway's, and here B checks a token, in `routeDORequest`'s `onBeforeConnect`. The socket's path, `/gateway/B/ws/b`, names the client by its OAuth client id, as Lumenize's Gateway takes a client's id from its path. `b` gets a second token from A's authorization server, by one more pass through its instant consent, with B's socket URL as its only audience, so neither of `b`'s tokens works where the other does. `onBeforeConnect` checks the token's signature, expiry and audience, and that the path names the client it was issued to. B trusts A's authorization server only because both run in one Worker, and a gateway of a client's own would trust its own issuer. The page's back channel, which is the demo's and outside both SEPs, passes unchecked, though a control sent over it needs the operator token on a deployed Worker.
+1. **`b` registers its secret first, on every connection,** with `{"secret": "whsec_..."}`, and B keeps it in the socket's attachment while the socket is open, then acknowledges it on the socket. `b` waits for that before it subscribes or refreshes, because A's verification challenge arrives at B while A is still handling the subscribe call. B answers that challenge itself, at once, from the secret it holds, without asking `b`.
+2. **B passes on each delivery whose signature verifies and whose `webhook-timestamp` is within five minutes, answers `401` to one that fails either, and answers A straight away.** It passes `{subscriptionId, webhookId, body}`, so `b` drops a `webhook-id` it has seen and a change none of its targets covers (Claude, 2026-10-25, while Larry was away). A send on a WebSocket does not wait for `b`, so B holds nothing while it answers. While `b`'s socket is closed, or quiet past its heartbeat, B answers `503`, one of the retryable answers SEP-3415 names for a receiver that is not ready.
+3. **The socket stays honest about `b`.** `b` pings every 30 seconds and B answers with `setWebSocketAutoResponse`, so B can treat a socket whose last ping is two intervals old as closed, as a sleeping laptop leaves it. On a reconnect B closes the client's older sockets, as Lumenize's `ClientGateway` does, and it closes a socket with `4401` when its token expires. Each socket is accepted with `ctx.acceptWebSocket` and tagged, as `client:b` or `page`. `b`'s token rides as a subprotocol entry, `rw.token.<token>`, beside `rw.1`, which B echoes, since a browser cannot set `Authorization` on an upgrade and a query string would reach logs.
+4. **B tracks nothing else.** A client that reconnects refreshes each of its subscriptions, so B never needs to know what it missed.
+5. **Who may connect is B's own business,** as it is any gateway's, and here B checks a token, in `routeDORequest`'s `onBeforeConnect`. The socket's path, `/gateway/B/ws/b`, names the client by its OAuth client id, as Lumenize's Gateway takes a client's id from its path. `b` gets a second token from A's authorization server, by one more pass through its instant consent, with B's socket URL as its only audience, so neither of `b`'s tokens works where the other does. `onBeforeConnect` checks the token's signature, expiry and audience, and that the path names the client it was issued to. B trusts A's authorization server only because both run in one Worker, and a gateway of a client's own would trust its own issuer. The page's back channel, which is the demo's and outside both SEPs, passes unchecked, though a control sent over it needs the operator token.
 
 ### Four ways to reach a resource
 
@@ -323,10 +324,12 @@ A resource is state, and a watcher wants to hold its newest version, not to witn
 - **The server never stores a delivery position per subscription** (Larry, 2026-10-21). A subscription's record is written when it is created and when it is refreshed, and § *Decisions* gives the reasons.
 - **Retry queue status per subscription is kept in memory, not storage.**
   - **What it holds:** for each subscription and URI, the pending version, its attempts so far, and in the `patch` form the version its patch starts from. Coalescing keeps that to one entry.
-  - **How long it runs:** a few attempts with backoff over no more than 10 to 15 minutes, as SEP-3415 bounds them, which puts it with Slack's and Dropbox's short retries. Timers keep a Durable Object alive that long at compatibility dates from 2026-10-01, as Lumenize measured, so retries need no alarm and no write.
+  - **How long it runs:** a few attempts with backoff over no more than 10 to 15 minutes, as SEP-3415 bounds them, which puts it with Slack's and Dropbox's short retries. Each entry's retry loop runs under `ctx.waitUntil`, which from compatibility date 2026-10-01 holds a Durable Object up to 15 minutes from the promise's start, capped at about 14 minutes from the first attempt, so retries need no alarm and no write. A bare timer must not be what holds them: of 14 timers Lumenize measured awaiting 240 seconds, 13 held the object and one was evicted at 120 seconds, as its `durable-objects.md` records.
+  - **What a 2xx clears.** Each entry has two states, pending and in flight. A `2xx` clears only the version it answers, then sends whatever is pending, and the store's precondition, its insert and the queue's update run in one synchronous block, with signing and sending after it.
+  - **What a handshake must not lose.** The handshake is a fetch, which opens A's input gate, so once it succeeds A writes the subscription row and reads the version, contents or cursor in one synchronous block.
   - **What repairs a drop:** a delivery whose retries run out, or that an eviction or restart drops, is repaired at the subscriber's next refresh. A webhook POST wakes a hibernating gateway, so B rarely misses one. A client behind a gateway misses more when it sleeps, and catches up by refreshing when it reconnects.
   - **The schedule is a setting of A's,** which the page sets for the demo, as § *The cast* says.
-- **A refresh is the catch-up:** the subscriber's own call repairs any number of misses, as Scenarios 5 and 7 show. What its result carries is the caller's choice each time, by `catchUp`, independent of the subscription's form (Larry, 2026-10-25). `notify`, the default, names the current version, `full` adds the contents, and `patch` sends a patch from the version the caller names. So a `notify` subscriber can still ask for a patch when it reconnects, and A's catch-up never depends on a subscription's form.
+- **A refresh is the catch-up:** the subscriber's own call repairs any number of misses, as Scenarios 5 and 7 show. What its result carries is the caller's choice each time, by `catchUp`, independent of the subscription's form (Larry, 2026-10-25). `notify`, the default, names the current version, `full` adds the contents, and `patch` sends a patch from the version the caller names. So a `notify` subscriber can still ask for a patch when it reconnects, and A's catch-up never depends on a subscription's form. A refresh result and a delivery can cross, since one comes back on the HTTP response and the other through B's socket, so a client that receives a delivery for a URI while a refresh naming it is outstanding refreshes again once the result arrives (R41) (Claude, 2026-10-25, while Larry was away).
 
 #### Scenario 3: a first subscription, from nothing
 
@@ -442,7 +445,7 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
 
 *In sep-notes.md: R8 and R31.*
 
-`b`'s laptop sleeps again. At 15:40, `a` edits the note once more, making `v5`, and by about 15:55 A's retries have run out. When `b` wakes at 16:05, inside its grant, it reconnects to B, registers its secret again, and refreshes, naming the version it still holds:
+`b`'s laptop sleeps again. At 15:40, `a` edits the note once more, making `v5`, and by about 15:53 A's retries have run out. When `b` wakes at 16:05, inside its grant, it reconnects to B, registers its secret again, and refreshes, naming the version it still holds:
 
 ```jsonc
 // b → A: the refresh on reconnecting
@@ -581,9 +584,10 @@ Run Scenario 10 again with A's cut-off window at 10 minutes, and say `a` deleted
 **Subscribing requires an authenticated principal, as SEP-3415 does, and permission to read the resource a `uri` target names.** A call that fails either is refused with `Forbidden`, as SEP-3415 refuses it. A collection delivers only the members its principal may read, and SEP-3415's re-verification at delivery time ends a subscription whose principal has lost access (R22, R39). The principal comes from MCP's own OAuth flow, so every MCP client already knows how to get one. Here it is `b`, which holds the token. Level 1 follows the same rule, since it is SEP-3415's.
 
 - **The prototype's authorization server is scaffolding, and verifies no identity,** as the authorization server in front of Peter's reference server does. Anyone can get a token, so access to the notes stays open, but each client is its own principal, and no caller can unsubscribe another or replace its secret.
-  - **Getting a token.** A client registers at `/register`, a consent step approves at once, so that a script and the tests need no clicks, and the client exchanges the code with PKCE for a token. There are no refresh tokens, no revocation and no scopes. The Worker serves the authorization server's metadata at its origin's root.
+  - **Getting a token.** A client registers at `/register` and gets a `client_id` and a `client_secret`, a consent step approves at once, so that a script and the tests need no clicks, and the client exchanges the code with PKCE (`S256` only) and its secret (`client_secret_post`) for a token (Claude, 2026-10-25, while Larry was away). So a principal is bound to its registration, not to an identity, and knowing a client's id does not get its token. The server is stateless: the `client_id` is a signed value carrying the epoch and a hash of its `redirect_uri`, under 256 characters since it becomes B's path, the `client_secret` derives from it, and codes are signed and short-lived. It accepts a `redirect_uri` only on the Worker's origin or loopback, matched exactly, and a `resource` only of A's MCP endpoint or the caller's own `/gateway/B/ws/{client}`. There are no refresh tokens, no revocation and no scopes. The Worker serves the authorization server's metadata at its origin's root, without waking A.
+  - **What a free registration buys.** Anyone can register, so a registration cap per epoch, a subscription cap per principal answering `ResourceExhausted`, and a token bucket per host for verification POSTs bound it.
   - **What needs one.** Every call to A's MCP endpoint needs a token, and so does a `PUT` or `DELETE` on a note, so `a` registers too. A `GET` stays open, as it is for any `https` resource.
-  - **Checking it.** The token is signed with a key the Worker holds as a secret, names A's MCP endpoint as its audience, and carries the epoch it was issued in. `onBeforeRequest` checks its signature, expiry and audience at the edge, so a token that fails those checks never wakes A. A token from before a Wipe passes them, and A refuses it by its epoch. Neither check writes to storage.
+  - **Checking it.** The token is signed with a key the Worker holds as a secret, with its `alg` pinned, names A's MCP endpoint as its audience, and carries the epoch it was issued in. `onBeforeRequest` checks its signature, expiry and audience at the edge, so a token that fails those checks never wakes A. A token from before a Wipe passes them, and A refuses it by its epoch. Neither check writes to storage.
 - **Endpoint verification is SEP-3415's, cached per `(principal, url)`.** A verifies by the handshake only, so a receiver gets deliveries only once it has shown it holds the secret. SEP-3415's other three paths, an allowlist, out-of-band verification and the receiver's well-known document, let a principal aim deliveries at a receiver that never held its secret, which `sep-notes.md` records as a gap to raise.
 
 #### The `patch` form, in a later phase
@@ -597,7 +601,7 @@ For a resource whose contents are JSON, a delivery can carry an RFC 7396 merge p
 - **What a patch's value is.** A resource whose `contents` holds one `application/json` text entry is patched on its parsed body. Any other resource, a created one, and a catch-up with no starting version all go as `full`.
 - **No value holds a `null` member,** since a merge patch reads `null` as a deletion. A's closed schemas refuse one, and a server whose values could hold one sends `full` for that change.
 - **In a collection's catch-up, a member whose patch starts from a version `b` does not hold** is read again by `b`, by `resources/read` or `GET`, rather than caught up again, since deliveries may have moved `b` past the cursor's version (Claude, 2026-10-25, while Larry was away).
-- **The code is copied, and tested by round trip.** A copies `applyMergePatch` and its helper `setOwn`, from `@lumenize/structured-clone`, which patch keys such as `__proto__` as plain data, and writes a plain-JSON `diff` that returns one patch or none. A test checks that `diff` then `applyMergePatch` gives back the new value, on RFC 7396's Appendix A vectors and the predecessor's extra ones.
+- **The code is copied, and tested by round trip.** `b` applies patches with a copy of `applyMergePatch` and its helper `setOwn`, from `@lumenize/structured-clone`, which patch keys such as `__proto__` as plain data, and A computes them with a plain-JSON `diff` that returns one patch or none. A test checks that `diff` then `applyMergePatch` gives back the new value, on RFC 7396's Appendix A vectors and the predecessor's extra ones.
 
 #### Resources without an `https` URI, in a later phase
 
@@ -681,7 +685,7 @@ type ResourceChange = { uri: string } & (
   - the header `X-MCP-Subscription-Id` and the two well-known webhook paths, though SEP-3415 reserves them for Events, which makes their reuse the one departure, D1 in [sep-notes.md](../sep-notes.md)
 - **Replaced or narrowed,** as sep-notes.md sorts them:
   - **The key** is `(principal, delivery.url, target)`, without the form, so a refresh may change the form, and a principal that watches one target from two places gives each place its own `delivery.url` (R6).
-  - **The subscription `id`** is a keyed hash of the key (R25, N3).
+  - **The subscription `id`** is a keyed hash of the key (R25, N3), under a Worker secret of its own, stable across restarts, never the token-signing key.
   - **The body** is a `ResourceChange`, and **the retry model** coalesces to the newest version of each URI (R17, N1).
   - **One resource has no replay, `gap` or `truncated`,** and a collection's catch-up has a cursor of its own (R17, R32 to R35).
 - **Its error codes, reused as SEP-3415 intends.** It calls its five new codes general-purpose, "named for reuse across MCP and are not scoped to events". So this extension answers an undeclared form with `Unsupported`, a refused principal with `Forbidden`, an unsubscribe that matches nothing with `NotFound`, a server limit with `ResourceExhausted`, and a callback that fails verification with `CallbackEndpointError` (R29). SEP-3415's Open Question 7 asks whether these become new codes at all, and this extension follows its answer. An unknown URI is refused with `-32602`, as `resources/read` refuses it (R7).
@@ -706,7 +710,7 @@ type ResourceChange = { uri: string } & (
 - **SEP-2133 binds the extension:** Apache-2.0, Extensions Track, and an official-SDK reference implementation before review.
 - **Cloudflare Workers and Durable Objects host the prototype,** under `critical.md`'s rules for storage, secrets and `compatibility_date`.
 - **The transport is 2026-07-28's Streamable HTTP, stateless and JSON only.** One message per POST, with no `initialize`, no `Mcp-Session-Id` and no SSE. Every request carries the `MCP-Protocol-Version` and `Mcp-Method` headers and the `_meta` envelope, and a request without the envelope is refused with `400` and `-32602`. The examples leave the envelope out.
-- **Test machinery never reaches the demo's Worker.** Conformance fixtures and fault switches run on a separate `test-*` Worker, behind a `CONFORMANCE` secret, never in `wrangler.jsonc`'s vars.
+- **Test machinery never reaches the demo's Worker, or a deployed one.** The conformance suite cannot send a token, so it runs only locally, against `wrangler dev` over `http`, where a `CONFORMANCE` binding in the local config opens A's core methods to it, never the two subscribe methods. Its fixtures and that bypass live in an entry module the demo's `main` never imports, the binding is never set with `wrangler secret put`, and a check fails if it appears in the demo's config or bundle. The deployed `test-*` Worker runs with real tokens.
 
 ## Future state
 
@@ -758,7 +762,7 @@ None.
 | `write_note` takes an optional `version` precondition and returns the new version (Claude, 2026-10-25, while Larry was away) | A version the writer mints, as the predecessor's `newETag` was: A mints versions. |
 | A folder's `GET` returns its members' URIs, with no `ETag` (Claude, 2026-10-25, while Larry was away) | No `GET` for a folder: plain HTTP's blind spot would go unshown. A folder `ETag`: a collection has no version (R3). |
 | The phase on resources outside `https` adds the `_meta` version to every read A serves, `https` included (Claude, 2026-10-25, while Larry was away) | Only reads outside `https`: a `notify` subscriber that reads an `https` note through MCP could not tell which version it got. |
-| On a deployed Worker the page's controls need an operator token (Claude, 2026-10-25, while Larry was away) | Open controls: anyone could Wipe the deployed demo. |
+| The page's controls need an operator token, and are refused wherever its binding is absent (Claude, 2026-10-25, while Larry was away) | Open controls: anyone could Wipe the deployed demo. A check only on a deployed Worker: local runs would skip the path the deployed demo depends on. |
 | A collection member whose catch-up patch starts from a version `b` lacks is read again (Claude, 2026-10-25, while Larry was away) | Catching up again: it would return the same patch. |
 | `Mcp-Name` carries the target's `uri` or `uriTemplate`, and nothing for `listed` (R40) (Claude, 2026-10-25, while Larry was away) | No `Mcp-Name`: the transport gives the header to gateways in front of servers, which route by it. |
 | The conformance framework, `npx @modelcontextprotocol/conformance@0.2.0-alpha.12`, still the newest alpha on 2026-10-25 and kept out of `package.json`, grades A's core methods with `--requirements 2026-07-28` on the `test-*` Worker, and level 2 gets tests of this repo's own (Claude, 2026-10-25, while Larry was away) | The suite in `package.json`: it brings zod, which CLAUDE.md keeps out. A conformance switch on the demo's Worker: test machinery would reach it. |
@@ -766,127 +770,193 @@ None.
 | Sri's Events suites, `conformance` #521 and #541, still open, check level 1 as a check rather than a gate, pinned to a commit, with no test-only type or tool added to A (Claude, 2026-10-25, while Larry was away) | `clock.ticked` and control tools for them: test-only surface in A, where level 1 adds nothing to SEP-3415. Leaving them out: they are the nearest independent check of level 1. |
 | Each PR proposal ends with the objections we expect and our answers (Claude, 2026-10-25, while Larry was away) | No such section: the predecessor's list of objections showed that reviewers raise them anyway. |
 | The demo page is a phase that ends when beats 1 to 13 run, and what rehearsal brings goes into a child task file then (Claude, 2026-10-25, while Larry was away) | A child task file now: the rehearsal it waits on comes after the build. |
+| A registered client is confidential: `/token` requires its `client_secret`, and the scaffolding is stateless (Claude, 2026-10-25, while Larry was away) | Public clients with PKCE alone: anyone who knows a client's id, which appears in delivery URLs and socket paths, could get its token. Stored registrations: a storage write for every free registration. |
+| Tests keep A's POST to B inside the vitest-plugin lane with a spy on `globalThis.fetch` that loops the Worker's own origin back to its handler (Claude, 2026-10-25, while Larry was away) | `@msw/cloudflare`: two more dependencies for what the spy does. Running delivery tests under `wrangler dev`: it lacks fake time, eviction and isolation. |
+| A client that receives a delivery while a refresh naming that URI is outstanding refreshes again (R41) (Claude, 2026-10-25, while Larry was away) | Comparable versions: R3 keeps versions opaque. Accepting a stale copy until the next change: Goal 5 promises at most one refresh interval. |
+| Tests check every delivery with the `standardwebhooks` package as an outside verifier (Claude, 2026-10-25, while Larry was away) | Only this repo's own signer and verifier: they could agree on a wrong scheme. |
+| B passes `{subscriptionId, webhookId, body}` down the socket, and `b` drops a repeated `webhook-id` (Claude, 2026-10-25, while Larry was away) | The body alone: `b` could not tell a replayed older change from a new one. |
 
 ## Phases
 
 Each phase ends with its criteria passing in the vitest-plugin lane against one local Worker, unless it says otherwise. A phase's tests drive the Worker through its real routes and assert each message value by value, as its scenarios show them, and every criterion names the one change that would make it fail. A test that drops below the public API says why in its comment, as `../lumenize/.claude/rules/testing.md` requires.
 
+**How the tests reach things the lane cannot.** These are pinned in phase 1 and used by every phase after it:
+- **A's POST to B stays inside the lane.** A test-setup spy on `globalThis.fetch` sends a request for the Worker's own origin to `exports.default.fetch` and lets nothing else out, so B's real route, signature check and socket run end to end. Phase 1's first test is a probe that should fail, showing the spy sees a fetch made inside A. If it does not, the fallback is miniflare's `outboundService`. The same handlers serve as the fault receivers, answering `302`, `410`, `413` or `401`, hanging, or holding an answer until the test releases it.
+- **Time.** Comparisons with the clock (a grant's expiry, the cut-off window, `refreshBefore`) move it with `vi.setSystemTime`. Retries use a schedule set in milliseconds and real timers, waited on with `vi.waitFor`.
+- **Settings.** A test sets A's retry schedule, cut-off window, page size, attempt timeout and limits through miniflare `bindings`, never through the page's controls.
+- **Isolation.** Each test gets A and B of its own, under instance names from a binding, so rows, the counter, subscriptions and in-memory state never carry from one test to the next.
+- **Eviction.** `evictDurableObject` stands in for a restart, with `webSockets: "hibernate"` for B. A probe first shows whether eviction waits for A's pending work.
+- **One client for every lane.** From phase 4 on, the scenario tests use a client that takes a base URL and speaks only `fetch` and `WebSocket`, so the same file runs against a deployed Worker in phase 5. Criteria that need the lane's own tools say "local only".
+- **An outside check on signatures.** Every delivery a test captures is checked with the `standardwebhooks` package as well as B, so A's signer and B's verifier cannot agree on a wrong scheme. If the package does not run in workerd, Standard Webhooks' published test vectors take its place.
+
 1. **The Worker, its routing, and A's notes over plain HTTP.** This gives every later phase a running Worker, A's store of versions, and the plain-HTTP baseline of Scenario 1b.
    - **Builds:**
-     - the project: `package.json`, `wrangler.jsonc` at compatibility date 2026-10-01 with `global_fetch_strictly_public`, the `Server` and `Gateway` classes and static assets, and a vitest-plugin lane. Its new dependencies, for Larry to approve before the build: `wrangler`, `@cloudflare/vitest-plugin`, `vitest`, `typescript`, `@cfworker/json-schema`, and `typescript-json-schema` as a development tool.
-     - the vendored `routeDORequest` in `src/vendor/lumenize-routing/`, with `bindings` and `cors`, the Worker's turning of a disallowed preflight's `204` into `403`, and the route table's rows for notes
-     - A's store of versions, as § *The cast* describes it: one counter across A, the epoch, deletion rows, and pruning as A writes
-     - JSON Schema generated from `Note` and `List` with the spec's own generator and flags, `typescript-json-schema --defaultNumberType integer --required`, committed, with a check that fails when it goes stale
-     - plain HTTP on notes and folders, by Scenario 1b and § The cast
-     - `ATTRIBUTIONS.md`, listing the copied `routeDORequest` and the spec's files
+     - the project: `package.json`, and a `wrangler.jsonc` at compatibility date 2026-10-01 with `global_fetch_strictly_public`. It registers `Server` and `Gateway` under `exports` with `storage: "sqlite"` and no `migrations` array, and serves static assets with `run_worker_first` for every route the table lists. New dependencies, for Larry to approve before the build: `wrangler` 4.147.0, `@cloudflare/vitest-plugin` 1.3.6, `vitest`, `typescript` and `@cfworker/json-schema`, with `typescript-json-schema` and `standardwebhooks` as development tools, and in phase 8 `@vitest/browser-playwright` and Playwright.
+     - the vendored `routeDORequest` in `src/vendor/lumenize-routing/`, with `bindings` and `cors`, and the Worker's default-deny edge of § *The cast*
+     - A's store of versions, as § *The cast* describes it
+     - JSON Schema generated from `Note` and `List` with the spec's own generator and flags, `typescript-json-schema --defaultNumberType integer --required`, the types carrying `@additionalProperties false` so the schemas come out closed. It is committed, with a check that fails when it goes stale.
+     - plain HTTP on notes and folders, by Scenario 1b and § *The cast*
+     - `ATTRIBUTIONS.md`, listing the copied `routeDORequest` and the spec's files at commit `dae694f6`
    - **Success criteria:**
+     - The fetch spy's probe sees a fetch made inside A. Mutation: install the spy after A's first fetch.
      - Scenario 1b runs as a test, with every status and `ETag` it shows. Mutation: answer the conditional `GET` with `200`.
      - A `PUT` under a stale `If-Match` answers `412`, and A's rows are unchanged after it. Mutation: skip the precondition.
-     - A `PUT` whose body has a `null` or unknown member answers `400`. Mutation: open the schema with `additionalProperties`.
-     - A request from another `Origin`, a preflight included, answers `403`, and no `Server` object exists after it. Mutation: drop the preflight's turn from `204` to `403`.
+     - A `PUT` with an unknown member answers `400`. Mutation: drop `@additionalProperties false`.
+     - A `PUT` with a `null` member answers `400`. Mutation: make the member nullable.
+     - A body over 1 MiB answers `413`. Mutation: lift the cap.
+     - A request from another `Origin` answers `403` on every route, a preflight included, and no `Server` object exists after it. Mutation: let the preflight's `204` through.
+     - `GET /server/X/notes/note-1` answers `404`, and `listDurableObjectIds(env.SERVER)` is unchanged. Mutation: route any instance name.
+     - A navigation request for `/authorize` and for a note reaches the Worker, not the asset fallback. Mutation: drop `run_worker_first`.
      - A deletion adds a row marked deleted, and a later `GET` answers `404`. Mutation: delete the row.
-     - A folder's `GET` lists its members' URIs and carries no `ETag`. Mutation: add one.
-     - With the cut-off window set short, the next write removes rows older than it, except each live resource's newest. Mutation: prune the newest row too.
+     - A folder's `GET` lists its members' URIs and carries no `ETag`, and a write under `inbox2/` is not among `inbox/`'s members. Mutation: match the prefix without its trailing slash.
+     - With the cut-off window set short and a deletion older than it, the next write removes old rows, the deletion's among them, but keeps each live resource's newest. Mutation: keep deletion rows.
+     - Delete a note, let the window pass, write it again: its new version differs from the deletion's. Mutation: prune before inserting.
      - The schema check fails when `Note` gains a member and the generated schema does not. Mutation: skip the comparison.
 2. **A's core MCP server, graded by the conformance suite.** This makes A an MCP server of 2026-07-28, which Scenario 1a and every later phase speak to.
    - **Builds:**
      - the JSON-RPC core, copied from Larry's `json-rpc-mixin`: its processing core, its error-to-status mapping, and its tests of the JSON-RPC spec's examples, without zod, `agents`, dispatch by reflection, batches or its WebSocket envelope. It is relicensed Apache-2.0 and listed in `ATTRIBUTIONS.md`.
-     - the transport of § *Constraints*, checking `Mcp-Method` and `Mcp-Name` against the body
-     - validation of every message against the spec's `schema.json` with `@cfworker/json-schema`, the file taken from upstream, since the `../modelcontextprotocol` fork has no `schema/2026-07-28/` yet
+     - the transport of § *Constraints*, in A's server role module, with the role seams of § *The cast*
+     - validation of every message against the spec's `schema.json` at `dae694f6` with `@cfworker/json-schema`, taken from upstream, since the `../modelcontextprotocol` fork has no `schema/2026-07-28/` yet
      - A's core methods of § *The cast*, `write_note`'s precondition and result among them
-     - a `test-*` Worker, deployed or local, with the suite's fixtures behind the `CONFORMANCE` secret, which join `resources/list` only there
+     - the conformance run of § *Constraints*: local only, against `wrangler dev` over `http`, with `npx @modelcontextprotocol/conformance@0.2.0-alpha.12 server --url http://localhost:<port>/server/A/mcp --requirements 2026-07-28 --expected-failures ./conformance-baseline.yml`, whose exit code is the gate. The baseline lists failures as `<scenario>:<check-id>`, each with its reason, such as `server-sse-multiple-streams` against JSON only and the `input-required-result-*` scenarios. `results/` is gitignored.
    - **Success criteria:**
      - Scenario 1a runs as a test, until phase 10 adds the `_meta` version and updates it. Mutation: name a version in the read's result.
-     - The spec's 129 example messages each pass validation, and one with a member removed fails it. Mutation: validate nothing.
-     - A request without the `_meta` envelope answers `400` with `-32602`, one whose `Mcp-Name` disagrees with its body answers `400`, an unknown method answers `404` with `-32601`, and a notification answers `202`. Mutation: drop each check in turn.
-     - `write_note` with a stale `version` answers `isError: true`, and A's rows are unchanged after it. Mutation: skip the precondition.
-     - The suite's server scenarios for `--requirements 2026-07-28` pass on the `test-*` Worker, except those its `conformance-baseline.yml` lists, each with its reason. Mutation: remove a core method.
+     - Each of the spec's example files passes validation against the definition its directory names, and one with a required member removed fails it. Mutation: validate against `JSONRPCRequest` only.
+     - A `resources/read` without `params.uri` answers `-32602`. Mutation: skip the method's own definition.
+     - A request without the `_meta` envelope answers `400` with `-32602`. An `Mcp-Name` that disagrees with the body, or an `MCP-Protocol-Version` that disagrees with `_meta`, answers `400` with `HeaderMismatch` (`-32020`), and a base64-encoded `Mcp-Name` is decoded first. An unknown method answers `404` with `-32601`, and a notification answers `202`. Mutation: drop each check in turn.
+     - `write_note` with a stale `version` answers `isError: true`, and with an unknown or `null` member it is refused, A's rows unchanged after either. Mutation: skip the precondition.
+     - The conformance run exits `0`. Mutation: remove a core method.
+     - A check fails if `CONFORMANCE` appears in the demo's config or bundle. Mutation: import the conformance entry module from `main`.
 3. **The authorization server, and tokens at the edge.** This gives every client its own principal, so subscriptions are keyed by who asked.
    - **Builds:**
-     - the authorization server module of § *Who may subscribe*: registration, an instant consent, PKCE, tokens signed with a Worker secret and naming their audience, A's MCP endpoint or B's socket, and their epoch, and the metadata documents at the origin's root
-     - `onBeforeRequest` on A's routes, by the route table
+     - the authorization server of § *Who may subscribe*, stateless, in a module of its own, with its metadata served by the Worker without waking A
+     - `onBeforeRequest` on A's routes, by the route table, setting the verified principal in the claims header and stripping that header from every request it did not verify
      - `mcp-client.ts`, the client module `a`, `b` and the tests share, using only `fetch` and Web Crypto
-     - **Exploratory, with both paths pinned:** the suite's server mode takes only a `--url`. The phase first reads how the 2026-07-28 requirement set's scenarios authenticate. If the suite gets a token from A's authorization server, it runs against the protected endpoint. If it cannot, the `CONFORMANCE` secret on the `test-*` Worker lets it through without a token, and the scenarios about protected resources run against the protected endpoint.
+     - the client side of the conformance suite for `b`, with the wrapper command the predecessor used, naming the `auth/*` scenarios `b` passes, such as `auth/metadata-default`, and listing the rest in the baseline with reasons
    - **Success criteria:**
-     - A call to A's MCP endpoint without a token, or with one whose signature, expiry or audience is wrong, answers `401`, and no `Server` object exists after it. Mutation: let `onBeforeRequest` pass a bad audience.
-     - A token from before a Wipe passes the edge, and A refuses it by its epoch. Mutation: skip the epoch check.
+     - A call to A's MCP endpoint without a token answers `401` with `WWW-Authenticate` carrying `resource_metadata`, and A's MCP handler sees nothing. Mutation: let it through.
+     - A token with a bad signature, one past its expiry under `vi.setSystemTime`, and `b`'s real token for B's socket each answer `401`, and A's handler sees nothing. The first two are minted with a test helper holding the signing secret, since a real one cannot be made bad. Mutation: drop each check in turn.
+     - A request that arrives with the claims header already set, and no token, is treated as anonymous. Mutation: trust the inbound header.
+     - A code redeemed without its client's `client_secret`, or by another client, answers `invalid_client`. Mutation: accept a public client.
+     - A missing or `plain` code challenge is refused, and a wrong verifier is refused. Mutation: skip the PKCE check.
+     - A code works once, and only with the `client_id`, `redirect_uri` and `resource` it was issued for. Mutation: accept a second redemption.
+     - `/register` refuses a `redirect_uri` outside the Worker's origin and loopback, and `/authorize` refuses one that does not match exactly. Mutation: accept any.
+     - A `resource` other than A's MCP endpoint or the caller's own `/gateway/B/ws/{client}` is refused. Mutation: accept `/gateway/B/ws/c` for `b`.
+     - A token whose header names another `alg` is refused. Mutation: let the token choose.
+     - A cross-origin `POST /token` answers `403`. Mutation: skip `applyCorsPolicy` on the routes handled by hand.
      - A `GET` of a note needs no token, and a `PUT` without one answers `401`. Mutation: open `PUT`.
-     - The suite still passes by one of the two pinned paths, and the baseline lists the `auth/*` client scenarios `b`'s flow does not pass, each with its reason. Mutation: break PKCE.
-4. **Level 1 end to end: A's webhook delivery, gateway B, and the Events server.** This builds the webhook code both levels share, and shows Scenario 2.
+     - Past the registration cap, `/register` answers `429`. Mutation: lift the cap.
+     - The client side of the suite passes the scenarios it names. Mutation: break PKCE in `mcp-client.ts`.
+4. **Level 1 end to end: A's webhook delivery, gateway B, the Events server, and the Wipe.** This builds the webhook code both levels share, and shows Scenario 2.
    - **Builds:**
-     - A's webhook module: Standard Webhooks signing with the subscriber's `whsec_` secret, the verification handshake cached per `(principal, url)` in memory, the retry queue in memory with A's schedule as a setting, `redirect: "manual"` with any `3xx` a failure, and `410` and `413` as answers that stop retrying
-     - B's two routes: the webhook receiver, which verifies, passes a delivery down its client's socket, and answers `401` or `503` as § *The leg between the gateway and its client* says; and the socket, with `onBeforeConnect` and the secret's registration, from which B answers a handshake itself
+     - A's webhook module: Standard Webhooks signing with the subscriber's `whsec_` secret, the verification handshake with a single-use nonce compared in constant time and cached per `(principal, url)` in memory, a token bucket per destination host for verification POSTs, the retry queue in memory under `ctx.waitUntil` with A's schedule clamped to SEP-3415's bounds, an attempt timeout, `redirect: "manual"` with any `3xx` a failure, and `410` and `413` as answers that stop retrying. A refuses a `delivery.url` that is not `https`, and a secret that is not `whsec_` and 24 to 64 decoded bytes, with `InvalidParams`.
+     - each pending entry's two states, pending and in flight, with the store's precondition, insert and queue update in one synchronous block, as § *Only the newest version matters* says
+     - B's routes and its socket, by § *The leg between the gateway and its client*: verification and freshness, the heartbeat, superseding, closing at the token's expiry, tags, and the token as a subprotocol entry
      - the Events types, written in the spec's style from SEP-3415 at b0efd11, which ships no TypeScript, with JSON Schema generated as in phase 1
-     - `io.modelcontextprotocol/events` declared with an empty settings object, and `events/list`, `events/subscribe` and `events/unsubscribe` for `mcp.resource.updated`, with `cursor: null`, lazy expiry, and `Unsupported` for `events/poll` and `events/stream`
-     - the back channel from A and B, which every later phase's tests watch through, and the operator token for the page's controls
-     - local delivery over `wrangler dev --local-protocol https`, with A posting to its own origin, a claim the phase checks first
+     - `io.modelcontextprotocol/events` declared with an empty settings object, and `events/list`, `events/subscribe` and `events/unsubscribe` for `mcp.resource.updated`, with `cursor: null`, lazy expiry, `Mcp-Name` as SEP-3415 asks, and `Unsupported` with `data: {"feature": "deliveryMode"}` for `events/poll` and `events/stream`
+     - the back channel from A and B, redacted at the source, which every later phase's tests watch through
+     - the operator token and the controls it guards, the Wipe's effect on A and B among them, by § *The cast*. Phase 8 adds only the page's buttons.
+     - Sri's suites, `conformance` #521 at `23c7c2d2f8` and #541 at `095a156277`, run from a checkout with `npm start --` as a check rather than a gate
    - **Success criteria:**
      - Scenario 2 runs as a test. Mutation: deliver an occurrence before the handshake.
-     - A delivery whose body was altered answers `401` at B, and A retries it on its schedule, under fake timers. Mutation: skip B's signature check.
-     - While `b`'s socket is closed, B answers `503`, and A's retry delivers the occurrence once `b` reconnects. Mutation: answer `200` with no socket.
-     - A challenge signed with a secret B never registered fails the subscribe with `CallbackEndpointError` and `challenge_failed`. Mutation: answer every challenge.
+     - A POST to B validly signed over a different body answers `401`, and nothing goes down the socket. Mutation: skip B's signature check.
+     - A correctly signed delivery whose `webhook-timestamp` is six minutes old answers `401`. Mutation: skip the tolerance.
+     - A receiver answering `401` is retried on A's schedule, each retry with a new `webhook-timestamp` and a signature that verifies, and no POST follows the last attempt. Mutation: reuse the first attempt's headers.
+     - While `b`'s socket is closed, B answers `503`, and A's retry delivers once `b` reconnects. Mutation: answer `200` with no socket.
+     - With `b`'s pings stopped and its socket still open, B answers `503` once the last ping is two intervals old. Mutation: trust an open socket.
+     - With `b`'s old socket still open after a reconnect, a delivery signed with the newest secret verifies and goes down the newest socket only. Mutation: use the first socket found.
+     - B closes a socket when its token expires, with code `4401`. Mutation: leave it open.
+     - An upgrade to `/gateway/B/ws/b` with no token, A's MCP token, `b`'s token used on `/gateway/B/ws/c`, or an expired token answers `401` with no Gateway woken, and a cross-origin upgrade answers `403` before the hook runs. Mutation: drop each check in turn.
+     - The subscribe waits for B's acknowledgement that it stored `b`'s secret, and passes on every run. Mutation: subscribe before the acknowledgement.
+     - A challenge signed with a secret B never registered, an echo with one character changed, and a reused nonce each fail with `CallbackEndpointError` and `challenge_failed`. Mutation: answer every challenge.
+     - The same principal subscribing the same URL to a new target sends no challenge, a second principal is challenged, and after `evictDurableObject(A)` the next subscribe is challenged again. Mutation: cache per URL alone.
+     - Past the token bucket, a verification POST to one host is refused with `ResourceExhausted`. Mutation: lift the bucket.
+     - An `http://` delivery URL, and a secret of 23 bytes, 65 bytes or the wrong prefix, are refused with `InvalidParams`. Mutation: skip each check in turn.
      - A receiver answering `302` fails the attempt, and the `Location` is never fetched. Mutation: follow redirects.
-     - `410` stops the retries of that delivery. Mutation: retry on `410`.
+     - `410` and `413` each stop the retries of that delivery. Mutation: retry on either.
+     - A receiver that hangs is retried after the attempt timeout. Mutation: wait with no timeout.
      - A refresh after an absence answers `cursor: null`, and nothing missed is replayed. Mutation: replay a missed occurrence.
-     - `events/poll` answers `Unsupported`. Mutation: answer `-32601`.
-     - A control sent without the operator token, under the deployed configuration, is refused. Mutation: skip the check.
-     - Sri's suites run against level 1 at a pinned commit, and `sep-notes.md` § *Findings* records which of their rows they could not grade, and why. Mutation: none; this records rather than gates.
+     - `events/poll` and `events/stream` answer `Unsupported` with `data.feature` `deliveryMode`. Mutation: answer `-32601`.
+     - Across Scenarios 2 to 10, a back-channel listener never receives `whsec_` followed by base64, a token, or a control message. Mutation: report the raw message.
+     - With no operator-token binding at all, a Wipe is refused, and with the token it is accepted. Mutation: treat an absent binding as open.
+     - Two Wipes in a row each raise the epoch, a version minted after a Wipe differs from every version before it, and a retry pending at a Wipe never reaches B after it. Mutation: delete storage without clearing the queue.
+     - Sri's suites run against level 1, and `sep-notes.md` § *Findings* records which of their rows they could not grade, and why. Mutation: none; this records rather than gates.
 5. **A deployed tier.** This grounds the claims that hold only on Cloudflare, as `.claude/rules/testing.md` asks.
-   - **Builds:** a deploy of the `test-*` Worker, and a script that runs the level 1 tests against it. Each later phase adds its scenarios to that run.
+   - **Builds:** a deploy of the `test-*` Worker with real tokens and no conformance bypass, and a script that runs phase 4's scenario tests against it through the one client the phases' preamble names. Each later phase adds its scenario tests to that run.
    - **Success criteria:**
-     - Level 1's tests pass against the deployed Worker. Mutation: deploy with `global_fetch_strictly_public` removed, which must fail A's POST to B with error 1042, recorded in `sep-notes.md` § *Findings*.
-     - A rerun of the measurement in `sep-notes.md`'s SSRF note, as a test, finds every range it names still refused. Mutation: none in code; the test guards the platform.
+     - Level 1's scenario tests pass against the deployed Worker. Mutation: deploy with a broken signer.
+     - The SSRF measurement reruns over `https` through A's own delivery path, subscribing with `delivery.url` at sslip.io and nip.io names. Each address gets the code `sep-notes.md` records, Google's address through both services is reached in the same run, the three addresses that time out do so, and a rebinding service that takes a nonce forces a fresh resolution on every fetch. Mutation: list the public control among the refused, once, to see the test fail.
+     - A deploy without `global_fetch_strictly_public` records in `sep-notes.md` § *Findings* what A's POST to B then gets, since Cloudflare's docs say error 1042 and a Lumenize measurement saw a Durable Object reach its own workers.dev URL without the flag. Mutation: none; this measures rather than gates.
 6. **Level 2 for one resource.** This builds this extension's own methods, and shows Scenarios 3 to 8.
    - **Builds:**
      - the capability, `forms: ["notify", "full"]`, in `server/discover`
-     - `resources/webhooks/subscribe` and `resources/webhooks/unsubscribe` by R5 to R8, R16, R22, R25 and R40
+     - `resources/webhooks/subscribe` and `resources/webhooks/unsubscribe` by R5 to R8, R16, R17, R22, R25, R29 and R40, with the subscription cap answering `ResourceExhausted`
      - deliveries of a `ResourceChange` by R10 to R14 and R26 to R28, on phase 4's webhook module with the coalescing queue of N1
      - `catchUp` in `notify` and `full`, the base version of R37, and a subscription whose grant lapsed subscribing again
+     - the handshake read of § *Only the newest version matters*: once the handshake succeeds, the subscription row is written and the version and contents read in one synchronous block
    - **Success criteria:**
      - Scenarios 3 to 8 run as tests. Mutation: drop the contents from a `full` result.
+     - With the receiver holding the handshake's answer, a write of `v2` lands, and once it is released `b` holds `v2`. Mutation: read the version before the handshake.
      - With B answering `503`, an edit to `v3` and then `v4` delivers only `v4`, and never `v3` after it. Mutation: queue `v4` behind `v3`.
+     - With the receiver holding its `200` for `v3`, a write of `v4` is delivered once `v3`'s answer arrives. Mutation: let the `2xx` clear the whole entry.
+     - A delivery of `v5` that reaches `b` before the answer to a refresh naming `v4` leaves `b` holding `v5` after the second refresh R41 asks for. Mutation: let `b` take the refresh result as it comes.
+     - Clients `b` and `c` on note-42, with `c`'s socket closed: `b` gets `v2` at once while `c`'s retries run, nothing for `/hooks/c` goes down `b`'s socket, and the two get different `webhook-id`s for the same version. Mutation: key the queue by URI alone.
      - `webhook-id` is the same on each retry of one version and new for the version that replaces it. Mutation: mint one per attempt.
      - A receiver's `410` stops that version only, and the next version is delivered. Mutation: end the subscription on `410`.
      - A change whose `full` body passes 256 KiB is delivered as `notify`. Mutation: send it `full`.
      - A refresh with `catchUp: "notify"` carries no contents, though the subscription's form is `full`. Mutation: follow the subscription's form.
-     - A subscription to a URI nobody wrote answers its base version with `deleted: true`, and the first write is delivered as `v1`. Mutation: refuse the subscribe.
+     - The subscribe result's `version` equals the note's `ETag` without its quotes. Mutation: render one as the stamp and the other as the label.
+     - A refresh that changes the form or rotates the secret replaces it, with `b` registering the new secret at B first. Mutation: keep the old form.
+     - A URI A could never serve answers `-32602`, and `form: "patch"` before phase 9 answers `Unsupported` with `data: {"feature": "form", "value": "patch"}`. Mutation: accept any.
+     - A missing or mismatched `Mcp-Name` answers `400` with `HeaderMismatch`. Mutation: skip the header check.
+     - The capability lists `notify`, and `mcp-client.ts` refuses to call these methods on a server that has not declared it. Mutation: skip the client's check.
+     - A subscription to a URI nobody wrote answers its base version with `deleted: true`, and the first write is delivered as its first version. Mutation: refuse the subscribe.
      - Another principal's unsubscribe with the same target and URL answers `NotFound`, and the subscription still delivers. Mutation: leave the principal out of the key.
-     - The `id` differs from an unkeyed hash of the key. Mutation: drop the key.
-     - Past `refreshBefore`, under fake time, deliveries stop, and a new subscribe naming the version it holds answers the current one. Mutation: never expire.
+     - With the subscription key fixed, changing only the hash key through a test binding changes the `id`, and the `id` is unchanged across a refresh and across a lapse and a new subscribe. Mutation: drop the key from the hash.
+     - Past `refreshBefore`, deliveries stop, and a new subscribe naming the version it holds answers the current one. Mutation: never expire.
+     - Past the subscription cap, a subscribe answers `ResourceExhausted` with `data.limit` `subscriptions`. Mutation: lift the cap.
+     - Evicting A while `v3` is pending after a `503` sends no `v3` afterwards, and `b`'s refresh returns the current version. Evicting B with its sockets hibernated, the next delivery verifies against the attachment and goes down the socket. Mutation: keep the secret in an instance field. Local only.
 7. **Collections.** This covers folders, templates and `listed` targets, and shows Scenarios 9, 10 and 10b.
-   - **Builds:** the two templates and the `resources/list` of § *The cast*, folder reads, and R18 to R20 and R32 to R38, with A's page size as a setting
+   - **Builds:** the two templates and the `resources/list` of § *The cast*, folder reads, R18 to R20 and R32 to R38, A's page size as a setting, and the reset of § *The cast*, which needs no write
    - **Success criteria:**
-     - Scenarios 9, 10 and 10b run as tests. Mutation: deliver note-43's `v2`.
-     - An empty folder answers `changes: []` and a cursor, not a version. Mutation: answer a version.
+     - Scenarios 9, 10 and 10b run as tests, 10b with one write outside the inbox after the time jump. Mutation: deliver note-43's `v2`.
+     - An empty folder answers `changes: []` and a cursor, not a version, and subscribing to a type's root succeeds as a collection. Mutation: answer a version.
+     - Each write to a member yields exactly one delivery, naming the member, and none for the folder. Mutation: deliver the folder too.
+     - A write under `inbox/sub/` is delivered on the inbox's subscription, and one under `inbox2/` is not. Mutation: match the prefix without its trailing slash.
      - No delivery carries a cursor. Mutation: add one.
-     - With the page size set to one, a catch-up of two changes comes in two results, the first with `hasMore: true`. Mutation: ignore the page size.
+     - With the page size set to one, a catch-up of two changes comes in two results that list each member once, the second without `hasMore`. Mutation: return the newest stamp as the `hasMore` cursor.
+     - A paged reset with page size one leaves `b` dropping nothing until its last page. Mutation: drop after each page.
+     - A write between two pages is returned by the next refresh. Mutation: take the reset's final cursor at its first page.
+     - A collection catch-up with `catchUp: "full"` carries each member's contents. Mutation: ignore `catchUp` for collections.
      - `.../server/A/{type}/archive` covers both types' archives, `{+path}` matches any depth, and a template with another expression is refused with `Unsupported`. Mutation: let `{type}` span segments.
-     - A `listed` target covers the lists as well as the inbox. Mutation: list the inbox only.
+     - A `listed` target covers the lists as well as the inbox, and a write to an archived note is not delivered on it. Mutation: list every note.
      - R39 goes unexercised, since everyone may read A's notes, and the phase says so rather than building a revocation to trigger it.
 8. **The demo page's mechanics.** **Mechanics pinned, staging exploratory:** the details beyond the rehearsed beats wait for Larry's rehearsal after the build.
-   - **Builds:** the page, served from the Worker's static assets; the four boxes, fed by the back channel; `a` and `b` running in the browser on `mcp-client.ts`, with `b`'s OAuth and PKCE; the Wipe, the retry schedule and the control that puts `b` to sleep and wakes it
+   - **Builds:** the page, served from the Worker's static assets with `Content-Security-Policy: script-src 'self'`, rendering every value as text; the four boxes, fed by the back channel; `a` and `b` running in the browser on `mcp-client.ts`, with `b`'s OAuth, PKCE and `client_secret` kept in `sessionStorage`; the buttons for phase 4's controls, with the operator token typed in, kept in `sessionStorage` and never in the URL; and the control that stops `b`'s pings without closing its socket. It runs under `wrangler dev --local-protocol https` with a mkcert certificate and `NODE_EXTRA_CA_CERTS` naming mkcert's root, so A's POST to its own origin verifies, and the browser lane of `../lumenize/.claude/rules/testing.md` § *Real-browser tests*.
    - **Success criteria:**
      - A real-browser test, with the page where production serves it, drives beats 1 to 13 and checks each box after each beat. Mutation: drop a back-channel report.
+     - A note titled `<img src=x onerror=…>` shows as text and runs nothing. Mutation: render with `innerHTML`.
      - After a Wipe, a token `b` held before it is refused by A, and `b` registers again. Mutation: keep the epoch.
 9. **The `patch` form.** This adds the third form, by § *The `patch` form*.
-   - **Builds:** `"patch"` in the capability's `forms`; the `mergePatch` variant of `ResourceChange` and of a result; patches on delivery and on catch-up; the copied `applyMergePatch` and `setOwn`, listed in `ATTRIBUTIONS.md`, and a plain-JSON `diff`; the patch rules as R-numbers in `sep-notes.md`; and in § *Findings*, the bytes on the wire for each form, for a note and a list of 100 items
+   - **Builds:** `"patch"` in the capability's `forms`; the `mergePatch` variant of `ResourceChange` and of a result; patches on delivery and on catch-up, A computing them with a plain-JSON `diff` and `b` applying them with the copied `applyMergePatch` and `setOwn`, listed in `ATTRIBUTIONS.md`; the patch rules as R-numbers in `sep-notes.md`; and in § *Findings*, the bytes on the wire for each form, for a note and a list of 100 items
    - **Success criteria:**
      - When `v4` replaces a pending `v3` that was to patch from `v2`, the delivered patch starts from `v2`. Mutation: start it from `v3`.
-     - With the retry queue's entry dropped, the patch starts from `v3`, and `b` catches up. Mutation: none; the test guards the fallback.
+     - After `evictDurableObject(A)` drops the retry queue's entry, the patch starts from `v3`, and `b` catches up. Mutation: persist the starting version across eviction. Local only.
      - A catch-up with `catchUp: "patch"` patches from the version it names, and from one A has pruned it carries the full contents. Mutation: patch from the newest kept version.
+     - In a collection's patch catch-up, a member whose patch starts from a version `b` does not hold is read again by `b`. Mutation: `b` refreshes with the cursor again.
      - A created resource, or one whose contents are not a single JSON text entry, goes `full`. Mutation: patch from nothing.
-     - A patch that sets `__proto__` changes only that member's data. Mutation: assign members plainly.
+     - A unit test of the copied `applyMergePatch`, which no request can reach since A's schemas refuse unknown members, shows a patch setting `__proto__` changes only that member's data and leaves `Object.prototype` alone. Mutation: assign members plainly.
      - `diff` and then `applyMergePatch` give back the new value on RFC 7396's Appendix A vectors and the predecessor's extra ones. Mutation: drop `null` handling.
 10. **Resources without an `https` URI.** This covers the resources most MCP servers have, by § *Resources without an `https` URI*.
     - **Builds:** A's lists served again under a scheme of A's own, as `lists:///inbox/groceries`, readable only through `resources/read`; the `_meta` version, under a provisional key in the extension's own namespace until one is agreed, on every read A serves
     - **Success criteria:**
-      - After a `notify` delivery of a list, a `resources/read` of it returns the delivered version or a later one in `_meta`. Mutation: omit the key.
-      - A `GET` of a `lists:///` resource has no route, and the resource has no `ETag`. Mutation: none; the test guards the scheme.
+      - Before this phase, a subscribe to `lists:///inbox/groceries` answers `-32602`, and after it, it succeeds. Mutation: refuse the scheme.
+      - A write to that list delivers `notify` with a version equal to the `_meta` version a quiet read then returns. Mutation: omit the key.
       - Every read A serves carries the `_meta` version, `https` included, and Scenario 1a's test and bullet now show it. Mutation: add it only outside `https`.
 11. **The PR's proposal.** This turns the prototype's notes into what the working group reads.
     - **Builds:** `proposals/XXXX-resource-webhooks.md` on the `resource-webhooks` branch of `../experimental-ext-triggers-events`, synced with `upstream` first, in the shape § *Relationships* gives; `sep-notes.md` § *Findings* filled for every item of § *What building it should teach us*
     - **Success criteria:**
-      - Every R-, N- and D-number the proposal cites exists in `sep-notes.md`, and every link resolves. Mutation: cite a withdrawn rule.
+      - Every R-, N- and D-number the proposal cites is a numbered entry outside `sep-notes.md` § *Withdrawn*, and every link resolves, the check run once on a citation of R9 to see it fail. Mutation: cite a withdrawn rule.
       - Every item of § *What building it should teach us* has a Findings entry. Mutation: leave one out.
       - The PR opens only on Larry's word, since pushing publishes.
 
