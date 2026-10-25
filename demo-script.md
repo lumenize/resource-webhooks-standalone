@@ -17,7 +17,7 @@ Each beat names what is on screen. Its narration is still to write.
 1. **The cast.** Four boxes: the writer `a`, the server A, the gateway B, and the client `b` behind it. The page shows every message, and what each party holds.
 2. **MCP core as it is** (Scenario 1a). `a` writes a note with `write_note`, and `b` reads it with `resources/read`. Nothing in the result names a version, and hearing about the next change would mean holding a stream open.
 3. **Plain HTTP** (Scenario 1b). ETags and a conditional `GET`. Polling is solved for an `https` resource, but nobody is told when it changes.
-4. **`mcp.resource.updated` over Events** (Scenario 2). `b` subscribes to `mcp.resource.updated`, naming B's webhook URL, and an ordinary occurrence reaches it through B. Nothing here is new. Its costs are two round trips per change, and no catch-up: replay over webhooks would cost the server a history and a watermark for each subscription, which state sync does without.
+4. **`mcp.resource.updated` over Events** (Scenario 2). `b` subscribes to `mcp.resource.updated`, naming B's webhook URL, and an ordinary occurrence reaches it through B. Nothing here is new. Its costs are two round trips per change, and no catch-up: replay over webhooks would cost the server a log of events and a watermark for each subscription, which state sync does without.
 5. **Wipe.** The page empties all four parties, so level 2 starts from a clean slate, with nothing carried over.
 6. **Only the newest version matters.** The turn to state sync: a watcher needs the latest value, not every change.
 7. **A first subscription, from nothing** (Scenario 3). One call subscribes and reads: its result names `v1` and carries the note.
