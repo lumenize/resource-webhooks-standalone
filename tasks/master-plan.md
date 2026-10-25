@@ -87,10 +87,10 @@ The predecessor, `../mcp-events-prototype`, never got as far as code, only desig
 
 ### Two levels on one cast
 
-- **Level 1, the floor, is `mcp.resource.updated` over Events, as Open Question 2 sketches it.** It uses SEP-3415's own methods and an event type of that name, and adds nothing to either, so it adds no requirement to `sep-notes.md`. It shares A's webhook code with level 2, and with it N2 and N3, both within SEP-3415's room. A declares `io.modelcontextprotocol/events` with an empty settings object, since it sends no list-change notifications. It takes the name Open Question 2 sketches, though SEP-3415 has yet to decide whether to reserve `mcp.*` names at all.
+- **Level 1, the floor, is `mcp.resource.updated` over Events, as Open Question 2 sketches it.** It uses SEP-3415's own methods and an event type of that name, and adds nothing to either, so it adds no requirement to `sep-notes.md`. It shares A's webhook code with level 2, and with it N3, within SEP-3415's room. A declares `io.modelcontextprotocol/events` with an empty settings object, since it sends no list-change notifications. It takes the name Open Question 2 sketches, though SEP-3415 has yet to decide whether to reserve `mcp.*` names at all.
 - **Level 2 is resource state sync, in this extension's own methods.** It keeps the cast, the gateway and SEP-3415's webhook rules, and changes what a delivery carries and how a subscriber catches up. Every requirement in `sep-notes.md` is for this level.
 - **The demo runs them in that order,** so the second is always seen against the first. Between them, the page's Wipe button, which § *The cast* defines, empties all four parties, so level 2 starts from a clean slate, with nothing carried over from level 1 (Larry, 2026-10-23).
-- **A's webhook code is built once, at level 1, and shared.** Level 2 composes it with a coalescing queue per subscription and URI, and its own body. The prototype builds SEP-3415's MUSTs and whatever the demo shows. Suspension, dual-signing during a secret's rotation, and `deliveryStatus`, which SEP-3415 lets a server omit, wait until something needs them.
+- **A's webhook code is built once, at level 1, and shared.** Level 2 composes it with a coalescing queue per subscription and URI, and its own body. The prototype builds SEP-3415's MUSTs and whatever the demo shows. Suspension, dual-signing during a secret's rotation, `deliveryStatus`, which SEP-3415 lets a server omit, and the three ways to verify an endpoint besides the handshake wait until something needs them.
 
 ### The cast
 
@@ -186,7 +186,7 @@ interface List { title: string; items: string[]; }
 Neither SEP-3415 nor this extension says how a gateway reaches its client. SEP-3415 says only that the endpoint passes on what it receives "by whatever channel it uses". This prototype uses a WebSocket, since Durable Objects hold them cheaply. Stdio, or anything else that carries a message each way, would do.
 
 1. **`b` registers its secret first, on every connection,** with `{"secret": "whsec_..."}`, and B keeps it in the socket's attachment while the socket is open. The secret has to reach B before `b` subscribes, because A's verification challenge arrives at B while A is still handling the subscribe call. B answers that challenge itself, at once, from the secret it holds, without asking `b`.
-2. **B passes on each delivery whose signature verifies, and answers A straight away.** A send on a WebSocket does not wait for `b`, so B holds nothing while it answers. While `b`'s socket is closed, B answers `503`, one of the retryable answers SEP-3415 names for a receiver that is not ready.
+2. **B passes on each delivery whose signature verifies, answers `401` to one whose signature does not, and answers A straight away.** A send on a WebSocket does not wait for `b`, so B holds nothing while it answers. While `b`'s socket is closed, B answers `503`, one of the retryable answers SEP-3415 names for a receiver that is not ready.
 3. **B tracks nothing else.** A client that reconnects refreshes each of its subscriptions, so B never needs to know what it missed.
 4. **Who may connect is B's own business,** as it is any gateway's, and here B checks a token, in `routeDORequest`'s `onBeforeConnect`. The socket's path, `/gateway/B/ws/b`, names the client by its OAuth client id, as Lumenize's Gateway takes a client's id from its path. `b` gets a second token from A's authorization server, by one more pass through its instant consent, with B's socket URL as its only audience, so neither of `b`'s tokens works where the other does. `onBeforeConnect` checks the token's signature, expiry and audience, and that the path names the client it was issued to. B trusts A's authorization server only because both run in one Worker, and a gateway of a client's own would trust its own issuer. The page's back channel, which is the demo's and outside both SEPs, passes unchecked.
 
@@ -333,7 +333,7 @@ A resource is state, and a watcher wants to hold its newest version, not to witn
 
 #### Scenario 3: a first subscription, from nothing
 
-*In sep-notes.md: R5, R8, R22 and R24.*
+*In sep-notes.md: R5, R8 and R22.*
 
 At 15:00, after the Wipe, `a` writes note-42 again, as `v1`. `b` connects to B at `wss://.../gateway/B/ws/b`, registers a secret, and subscribes in the `full` form, holding nothing, asking for the contents in the result too:
 
@@ -566,7 +566,7 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
   - **Getting a token.** A client registers at `/register`, a consent step approves at once, so that a script and the tests need no clicks, and the client exchanges the code with PKCE for a token. There are no refresh tokens, no revocation and no scopes. The Worker serves the authorization server's metadata at its origin's root.
   - **What needs one.** Every call to A's MCP endpoint needs a token, and so does a `PUT` or `DELETE` on a note, so `a` registers too. A `GET` stays open, as it is for any `https` resource.
   - **Checking it.** The token is signed with a key the Worker holds as a secret, names A's MCP endpoint as its audience, and carries the epoch it was issued in. `onBeforeRequest` checks its signature, expiry and audience at the edge, so a bad token never wakes A, and A refuses a token from an earlier epoch. Neither check writes to storage.
-- **Endpoint verification is cached per `(principal, delivery.url, delivery.secret)`.** SEP-3415 caches it per `(principal, url)`. A principal that once verified a webhook URL could then subscribe it again with a secret the receiver never held, skip the handshake, and flood it with deliveries it can only reject. Keyed by the secret, a new secret faces a new handshake, which the receiver fails unless it holds that secret. Rotating a secret costs one handshake, and subscribing the same webhook URL to many targets with one secret costs none.
+- **Endpoint verification is SEP-3415's, cached per `(principal, url)`.** A verifies by the handshake only, so a receiver gets deliveries only once it has shown it holds the secret. SEP-3415's other three paths, an allowlist, out-of-band verification and the receiver's well-known document, let a principal aim deliveries at a receiver that never held its secret, which `sep-notes.md` records as a gap to raise.
 
 #### The `patch` form, in a later phase
 
@@ -647,7 +647,7 @@ type ResourceChange = { uri: string } & (
 - **Taken by reference, from § *Webhook-Based Delivery* (R17):**
   - the TTL and refresh rules
   - the forward-proxy deployment, in which the webhook URL belongs to a gateway acting for the client
-  - endpoint verification, with the secret added to the key of its cache
+  - endpoint verification, by its handshake
   - the Standard Webhooks headers and signature
   - SSRF prevention and the TLS requirement, with Cloudflare's egress making the address check, as [sep-notes.md](../sep-notes.md) records from a measurement
   - the secret's format and rotation
@@ -724,7 +724,7 @@ None.
 | A catch-up's form is the caller's, chosen per call with `catchUp`, independent of the subscription's `form` (Larry, 2026-10-25) | Catch-ups in the subscription's form: a `notify` subscriber could never get a patch when it reconnects, and A's catch-up would depend on each subscription's form. |
 | The names are the extension identifier `io.modelcontextprotocol/resource-webhooks`, the methods `resources/webhooks/subscribe` and `resources/webhooks/unsubscribe`, and the target `listed`, and the PR asks whether the methods want a prefix of their own (2026-10-25) | A prefix of the extension's own, as SEP-3371's example names a method `com.example/search` after its extension: SDKs match method names exactly, so nothing requires one, while `resources/` belongs to the core specification, which is why the PR asks. |
 | Subscribing requires an authenticated principal, as SEP-3415 does, from MCP's OAuth flow with an authorization server that verifies no identity, as Peter's reference server has (Larry, 2026-10-20) | Anonymous callers sharing one principal: any of them could unsubscribe another or replace its secret. A login endpoint handing out a random token: the same idea outside the OAuth flow every MCP client already speaks. Requiring the old secret to unsubscribe or rotate: a client that lost its secret could only wait out the TTL, and the secret, held by gateways, would become a credential. |
-| Endpoint verification is cached per `(principal, delivery.url, delivery.secret)` (Larry, 2026-10-20) | Per `(principal, url)`, as SEP-3415 does: a principal that verified a webhook URL once could subscribe it again with a secret the receiver never held, and flood it. Per `(url, secret)` alone: two principals holding one secret would share a verification, which SEP-3415 rules out. |
+| Endpoint verification is SEP-3415's, cached per `(principal, url)`, and A verifies by the handshake only (Larry, 2026-10-25) | Per `(principal, url, secret)`, so that a new secret faces a new handshake: a verified principal can point a URL at any number of targets with no new handshake either way, so it bounds no flood, and its challenge on rotation names an `id` a stock Events receiver already routes to the old secret, which fails. Per `(url, secret)` alone: two principals holding one secret would share a verification, which SEP-3415 rules out. |
 | The server stores no per-subscription record of the version each subscriber acknowledged, and a delivery's patch starts from the resource's previous version (Larry, 2026-10-21) | Recording acknowledgements: on a Durable Object, one change watched by 1000 subscriptions would cost 1000 writes instead of one, writes being the most expensive operation, while a refresh on reconnect repairs a miss. Dropbox, Google Drive and Calendar, Gmail and Microsoft Graph record no delivery position per subscriber either: each treats its pushes as lossy and leaves catching up to the client. |
 | Resources without an `https` URI are in scope, in a later phase, with their version in `resources/read`'s `_meta` (Larry, 2026-10-20) | `https` only: a client could not tell whether a read is newer than a delivery, so every other resource would be left out. |
 | The field is `version`, with the semantics of HTTP's `ETag`: compared for equality, never required to sort (Larry, 2026-10-20) | `eTag`, Larry's own preference: the Filesystems strawman already says `version`, and following the group matters more. |

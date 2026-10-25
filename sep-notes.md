@@ -2,7 +2,7 @@
 
 The requirements of the SEP this prototype will become, in RFC 2119's words: MUST, SHOULD and MAY. Each gets a number that is never reused, so a conformance traceability file can cite it. The scenarios in `tasks/master-plan.md` show most of them at work, and each names the ones it shows.
 
-These notes are for the design's second level, resource state sync. The first level, `mcp.resource.updated` over Events, needs nothing beyond SEP-3415 and the type its Open Question 2 sketches, so it adds no requirement here. It shares A's webhook code with the second level, and with it N2 and N3, both within SEP-3415's room.
+These notes are for the design's second level, resource state sync. The first level, `mcp.resource.updated` over Events, needs nothing beyond SEP-3415 and the type its Open Question 2 sketches, so it adds no requirement here. It shares A's webhook code with the second level, and with it N3, within SEP-3415's room.
 
 ## Departures from SEP-3415
 
@@ -15,7 +15,6 @@ These notes are for the design's second level, resource state sync. The first le
 **Where SEP-3415 leaves a server room, this extension makes a choice within it.** None of these conflicts with SEP-3415's text:
 
 - **N1. Coalesced retries, in order per URI (R12, R13).** SEP-3415 describes retrying each event independently, with deliveries that may arrive out of order. It requires neither: it caps retries, sets no minimum, and lets a server abandon a delivery. Here a newer version replaces a pending older one, so a URI's deliveries arrive in version order. Peter agreed on SEP-3415's thread, on 2026-10-16, that an event type may coalesce, and that coalescing should not set `truncated`.
-- **N2. Verification is cached per `(principal, delivery.url, delivery.secret)` (R24),** adding the secret to SEP-3415's `(principal, url)`. It sends a handshake SEP-3415 would skip, when a principal brings a new secret, and never skips one SEP-3415 would send. Without it, a principal that verified a webhook URL once could subscribe it again with a secret the receiver never held, and flood it. The same fix would serve SEP-3415.
 - **N3. The subscription `id` is a keyed hash (R25),** where SEP-3415 asks only that it be deterministic.
 - **N4. A body too large for the `full` form goes as `notify` (R27),** keeping every body within SEP-3415's 256 KiB delivery profile.
 - **N5. A receiver's `410` stops one version (R28).** SEP-3415 makes it non-retryable for that delivery and leaves the subscription unaffected. Under coalescing, a delivery is one version, so later versions still go.
@@ -62,7 +61,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Taken from SEP-3415 by reference
 
-- **R17.** Webhook delivery follows SEP-3415's § *Webhook-Based Delivery*, at commit b0efd11, with these substitutions: this extension's methods for `events/subscribe` and `events/unsubscribe`, R6's key for SEP-3415's subscription key, a `ResourceChange` for an `EventOccurrence`, and a change's `uri` and `version` for an event's `eventId`. It narrows it as N1 to N6 say. SEP-3415's `cursor`, `maxAgeMs`, `truncated` and `gap` envelope never apply: one resource needs only its version, and a collection uses this extension's own `cursor` (R32 to R35), with `reset` (R34) in place of `truncated`.
+- **R17.** Webhook delivery follows SEP-3415's § *Webhook-Based Delivery*, at commit b0efd11, with these substitutions: this extension's methods for `events/subscribe` and `events/unsubscribe`, R6's key for SEP-3415's subscription key, a `ResourceChange` for an `EventOccurrence`, and a change's `uri` and `version` for an event's `eventId`. It narrows it as N1 and N3 to N6 say. SEP-3415's `cursor`, `maxAgeMs`, `truncated` and `gap` envelope never apply: one resource needs only its version, and a collection uses this extension's own `cursor` (R32 to R35), with `reset` (R34) in place of `truncated`.
 - **R29.** This extension uses SEP-3415's general-purpose error codes as SEP-3415 defines them: `Forbidden` for a principal refused or missing, `ResourceExhausted` for a server limit, `CallbackEndpointError` for a callback that fails verification or cannot be reached, plus `Unsupported` (R7) and `NotFound` (R16).
 - **SEP-3415's § *SSRF prevention* is met by the platform on Cloudflare Workers, as far as one measurement shows.** SEP-3415 asks a server to check a callback's resolved address at delivery time and connect to that address. A Worker's `fetch()` can do neither, since it takes no address and offers no DNS lookup.
   - **Measured on 2026-10-25,** at compatibility date 2026-10-01 with `global_fetch_strictly_public`, by a test Worker fetching fixed sslip.io and nip.io names that each resolve to one address. Cloudflare answered with its own error page for an address in every range SEP-3415 names: 127.0.0.1, 10.0.0.1, 172.16.0.1, 192.168.0.1, 169.254.169.254, `::1`, `fc00::1` and `fe80::1`. It did the same for 0.0.0.0, 100.64.0.1, 198.18.0.1, 198.51.100.1, 203.0.113.1, 224.0.0.1, 240.0.0.1, 255.255.255.255, `2001:db8::1`, `64:ff9b::a00:1` and `::ffff:127.0.0.1`, for the private IP literals 10.0.0.1 and 127.0.0.1, and for `localhost`. Google's address through the same two services was reached.
@@ -87,7 +86,6 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 ## Who may subscribe
 
 - **R22.** Both methods MUST be called with an authenticated principal, as SEP-3415 defines it. A server MUST refuse a principal that may not read every resource the target covers, with `Forbidden`.
-- **R24.** A server MUST cache endpoint verification per `(principal, delivery.url, delivery.secret)`, so that a new secret always faces a new handshake (N2).
 - **R25.** A server MUST derive a subscription's `id` from its key with a keyed hash, so that a logged `id` cannot confirm a guessed principal (N3).
 
 ## Pending
@@ -96,6 +94,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 - **The `_meta` key** under which `resources/read` carries the version of a resource without an `https` URI, to be agreed with the Filesystems working group, with the Transports working group's Definition Tags in view.
 - **The `patch` form's rules,** written in its phase.
 - **Two gaps inherited from SEP-3415:** which base64 alphabet the secret uses, and whether a result should also return the granted TTL, since `refreshBefore` is a clock time and a client's clock can be skewed.
+- **A flood SEP-3415 leaves open, for the PR.** Through the allowlist, out-of-band verification or the receiver's well-known document, a principal can aim deliveries at a receiver that never held its secret. The receiver can only reject them, and SEP-3415 retries a rejection, suspends only after a sustained failure rate, and lets a refresh reactivate the subscription. A rule closes it: a receiver answers a delivery it cannot verify with `401`, and a server treats that as consent withdrawn, stops delivering, and forgets its verification for `(principal, url)`, so the next subscribe needs a handshake the receiver can refuse.
 
 ## Out of scope, to list in the SEP
 
@@ -106,5 +105,6 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Withdrawn
 
+- **N2 and R24** (verification cached per `(principal, delivery.url, delivery.secret)`), withdrawn 2026-10-25: a verified principal can point a URL at any number of targets with no new handshake either way, and a challenge on rotation would fail a stock Events receiver.
 - **R21** (a version for a whole collection), withdrawn 2026-10-25 when a collection's catch-up came to name a cursor.
 - **R23** (callers without credentials share one anonymous principal), withdrawn 2026-10-20 when subscribing came to require an authenticated principal.
