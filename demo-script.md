@@ -26,5 +26,5 @@ Each beat names what is on screen. Its narration is still to write.
 10. **The laptop sleeps** (Scenario 6). With the demo's retry schedule on screen, `v4` replaces the pending `v3` while the audience watches.
 11. **Away past the retries** (Scenario 7). One refresh brings `b` to the current version.
 12. **A deletion** (Scenario 8).
-13. **A folder** (Scenario 9).
+13. **A folder** (Scenario 9), **and catching it up** (Scenario 10). note-43, edited twice and then deleted while `b` slept, comes back once, as its deletion.
 14. **What each flavor costs the SEPs.** The ledger of substitutions, narrowings and departures, and what comes next: the PR to the working group's repo, then an official-SDK implementation.

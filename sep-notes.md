@@ -38,7 +38,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 - **R5.** The request carries exactly one target (`uri`, `uriTemplate`, or `listed: true`), an optional `form`, an optional `version` naming the target's version the client holds, `delivery` with `url` and `secret`, and an optional `ttlMs`. A request without `form` gets `notify`. A `form` it names MUST be one the server declared.
 - **R6.** The subscription key is `(principal, delivery.url, target)`, with `delivery.url` compared as an exact string, and the target compared as its kind and its value (`uri`, `uriTemplate` or `listed`). A request whose key matches an existing subscription refreshes it: the server grants a TTL again, and replaces `form` and `delivery.secret`.
 - **R7.** A server MUST refuse a `uri` it could never serve, such as one with a scheme it does not serve or one outside all its templates, with the error `resources/read` gives for it. A `uri` that names a deleted resource is not refused, by R11. It MUST refuse a `form` it did not declare with SEP-3415's `Unsupported`, with `data` `{"feature": "form", "value": ...}`.
-- **R8.** The result MUST carry `id` and `refreshBefore`. For a `uri` target naming one resource, it MUST also carry that resource's current `version`, with `deleted: true` when that version deleted it, and in the `full` form, when the request's `version` is absent or differs from it, the resource's `contents`, as `resources/read` would return them. What the result carries for a `uri` naming a collection, and for the other targets, waits on Q1 in the master plan's § *Open questions*.
+- **R8.** The result MUST carry `id` and `refreshBefore`. For a `uri` target naming one resource, it MUST also carry that resource's current `version`, with `deleted: true` when that version deleted it, and in the `full` form, when the request's `version` is absent or differs from it, the resource's `contents`, as `resources/read` would return them. For a target that covers more than one resource, it carries what R32 to R35 say.
 - **R9.** A server MUST end a subscription with a `terminated` envelope when its principal can no longer read the resources it covers.
 
 ## Delivering a change
@@ -61,7 +61,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Taken from SEP-3415 by reference
 
-- **R17.** Webhook delivery follows SEP-3415's § *Webhook-Based Delivery*, at commit b0efd11, with these substitutions: this extension's methods for `events/subscribe` and `events/unsubscribe`, R6's key for SEP-3415's subscription key, a `ResourceChange` for an `EventOccurrence`, and a change's `uri` and `version` for an event's `eventId`. It narrows it as N1 to N6 say. SEP-3415's `cursor`, `maxAgeMs`, `truncated` and `gap` envelope do not apply to a target naming one resource. For a collection, they wait on Q1 in the master plan's § *Open questions*.
+- **R17.** Webhook delivery follows SEP-3415's § *Webhook-Based Delivery*, at commit b0efd11, with these substitutions: this extension's methods for `events/subscribe` and `events/unsubscribe`, R6's key for SEP-3415's subscription key, a `ResourceChange` for an `EventOccurrence`, and a change's `uri` and `version` for an event's `eventId`. It narrows it as N1 to N6 say. SEP-3415's `cursor`, `maxAgeMs`, `truncated` and `gap` envelope do not apply to a target naming one resource. A target that covers more than one resource uses this extension's own `cursor` instead (R32 to R35).
 - **R29.** This extension uses SEP-3415's general-purpose error codes as SEP-3415 defines them: `Forbidden` for a principal refused or missing, `ResourceExhausted` for a server limit, `CallbackEndpointError` for a callback that fails verification or cannot be reached, plus `Unsupported` (R7) and `NotFound` (R16).
 - **SEP-3415's § *SSRF prevention* is met by the platform, on Cloudflare Workers.** SEP-3415 asks a server to check a callback's resolved address at delivery time and connect to that address. A Worker's `fetch()` can do neither, since it takes no address and offers no DNS lookup, and Cloudflare makes the check itself on every subrequest, at connection time, so DNS rebinding gains nothing.
   - **Measured on 2026-10-25,** by a test Worker fetching hostnames that resolve to each address, through sslip.io and nip.io. Cloudflare refused, before connecting, every range SEP-3415 names: 127.0.0.1, 10.0.0.1, 172.16.0.1, 192.168.0.1, 169.254.169.254, `::1`, `fc00::1` and `fe80::1`. It also refused 0.0.0.0, 100.64.0.1, 198.18.0.1, 198.51.100.1, 203.0.113.1, 224.0.0.1, 240.0.0.1, 255.255.255.255, `2001:db8::1`, `64:ff9b::a00:1` and `::ffff:127.0.0.1`, and it refused IP literals and `localhost` outright. Google's address through the same two services was reached.
@@ -74,6 +74,11 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 - **R18.** A `uri` target covers that resource and its sub-resources. A delivery for a sub-resource names the sub-resource's own `uri`.
 - **R19.** A `uriTemplate` target covers every resource whose URI matches the template, and their sub-resources. Each simple `{name}` expression matches exactly one path segment.
 - **R20.** A `listed: true` target covers every resource `resources/list` returns to the subscription's principal.
+- **R32.** For a target that covers more than one resource, the result MUST carry a `cursor`, and a refresh MAY name the `cursor` of an earlier result. The result's `changes` MUST then hold every covered resource whose newest version came after that cursor, once each and at its newest version, as a `ResourceChange` in the subscription's form, with a deleted one as R11 delivers it. Without a cursor, `changes` MUST hold every covered resource that exists. A client SHOULD name the cursor of its last result on every refresh.
+- **R33.** A delivery MUST NOT carry a cursor, since deliveries may overlap and arrive out of order.
+- **R34.** When a server can no longer tell which covered resources changed after the named cursor, it MUST answer as though none were named, and set `reset: true`. A client that receives `reset: true` MUST treat as deleted every resource it holds under the target that no page of the reset lists. A server MUST NOT answer a stale cursor with an error.
+- **R35.** A server MAY split `changes` across results. A result that stops partway MUST set `hasMore: true`, with a `cursor` that resumes where it stopped, and a client SHOULD refresh again with that cursor until a result arrives without `hasMore`.
+- **R36.** A server MAY make cursors and versions one value, stamped from one ordered counter. A client MUST NOT rely on that: it compares versions only for equality, and passes a cursor back unchanged.
 
 ## Who may subscribe
 
@@ -83,8 +88,6 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Pending
 
-- **R21, held for Q1 in the master plan's § *Open questions*:** a target that covers more than one resource has a version the server computes for the whole set, which changes whenever a member is added, removed or changed.
-- **How a collection catches up, and how its responses page:** Q1 and Q2. If a change cursor is chosen, a cursor too old to serve is answered in the refresh result, never with HTTP `410`, which SEP-3415 already gives a receiver.
 - **The extension's names:** Q3.
 - **The `_meta` key** under which `resources/read` carries the version of a resource without an `https` URI, to be agreed with the Filesystems working group, with the Transports working group's Definition Tags in view.
 - **The `patch` form's rules,** written in its phase.
@@ -99,4 +102,5 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Withdrawn
 
+- **R21** (a version for a whole collection), withdrawn 2026-10-25 when a collection's catch-up came to name a cursor.
 - **R23** (callers without credentials share one anonymous principal), withdrawn 2026-10-20 when subscribing came to require an authenticated principal.

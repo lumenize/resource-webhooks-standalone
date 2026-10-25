@@ -27,7 +27,7 @@
 ### Technical
 
 - **SEP-3415's Open Question 2 is the floor for resources: the least a resource subscription over Events can be.** It asks whether resource subscriptions should be re-expressed as events, with "a reserved `mcp.resource.updated` event type whose arguments are `{uri}`", so that today's notification gains "cursors, poll and webhook delivery, and replay for free", and so that folding it in "would remove a parallel mechanism from the specification". Nothing in the sketch carries a value or a version: it is today's notification on Events' delivery. SEP-3415's § *Relationship to existing primitives* already allows it: "Servers MAY implement resource watching through events". Level 2's `notify` form carries the same news plus the version.
-- **SEP-3415's rationale argues against extending resource subscriptions instead of adding `events/*`.** Resources "have no parameters or cursors", it says, and adding "filter arguments, replay and three delivery modes" to them "would distort that model". For a single resource, level 2 keeps to that model: the target is a URI and nothing else, there is no replay and no cursor, and the webhook is the only delivery. The collection targets, `uriTemplate` and `listed`, and the change cursor in option (b) of Q1 come closest to what the rationale rejects, and Q1 weighs that.
+- **SEP-3415's rationale argues against extending resource subscriptions instead of adding `events/*`.** Resources "have no parameters or cursors", it says, and adding "filter arguments, replay and three delivery modes" to them "would distort that model". For a single resource, level 2 keeps to that model: the target is a URI and nothing else, there is no replay and no cursor, and the webhook is the only delivery. The collection targets, `uriTemplate` and `listed`, and a collection's change cursor come closest to what the rationale rejects, so that cursor appears only in a collection's refresh results, as § *Collections* shows.
 - **Open Question 6 and Peter's comment open the way to more.** Open Question 6 sketches `mcp.task.updated` with the payload `{status, progress?, result?}`, which shows that an Events payload may carry state, result included. Peter's comment of 2026-10-16 ties the two cases together, "observing task state vs stream of messages", as needing different handling. Level 2 takes up that point, with deliveries that carry the value or a patch. We prove it on resources first, because a resource already has a URI and contents, where tasks bring in the Tasks extension. Luca Chang's Task Event Sources draft, `experimental-ext-triggers-events` #2, already ties a task to an Events stream that carries its intermediate results, and Luca is now one of the working group's leads.
 - **Today a resource watcher needs an open stream.** `notifications/resources/updated` arrives only on a `subscriptions/listen` stream, since SEP-2575 replaced `resources/subscribe` with that stream's `resourceSubscriptions` filter. A change made while the stream is down is lost without a trace. Revisions 2025-03-26 to 2025-11-25 let a client resume an SSE stream with `Last-Event-ID`, but 2026-07-28 dropped that, and its server keeps no subscription state across reconnections. The notification also names only the URI, so acting on it takes another round trip via `resources/read`.
 - **SEP-3371's extension points have a known gap for this work.** The Filesystems working group has reported that an extension's handlers cannot publish resource change events, and SEP-3371's draft itself says that triggers and events may need more APIs, for webhooks and long-lived streams among them. On SEP-3415's thread, Felix has since proposed opening `subscriptions/listen`'s filter to extensions, keyed by extension identifier, with SEP-3371 requiring SDKs to let an extension publish to the streams that opted in (2026-10-23).
@@ -70,7 +70,7 @@ The predecessor, `../mcp-events-prototype`, never got as far as code, only desig
 - the forms `notify`, `full` and `patch`, and a delivery that names its own form
 - coalescing to the newest version, and catching up from a version the client names
 - a deletion delivered as a `notify` entry with a version of its own and `deleted: true`, with the subscription carrying on
-- in option (b) of Q1, a change cursor that falls back to the whole collection when it is too old to serve
+- a collection's change cursor, which falls back to the whole collection when it is too old to serve
 
 ## Design intent
 
@@ -117,7 +117,7 @@ block-beta
 - **A holds notes and lists.** Each one matches the template `.../server/A/{type}/{folder}/{id}`, with the types `notes` and `lists`, and is an `https` resource, such as `.../server/A/notes/inbox/note-42`, which a client can read with `resources/read` or a plain `GET`, and which carries an `ETag` per version. Notes change through A's tools, `write_note` and `delete_note`, or by `PUT` and `DELETE` on their URLs. A also runs the authorization server that `b` gets its token from.
   - **A serves its folders and types as collections.** A `resources/read` of `.../server/A/notes/inbox` or `.../server/A/notes` returns one entry in `contents` per note under it, and `resources/templates/list` lists `.../server/A/{type}`, `.../server/A/{type}/{folder}` and `.../server/A/{type}/{folder}/{id}`.
   - **`resources/list` returns the inbox's notes only,** so an archived note is reachable through a template and not through the list.
-  - **A keeps each resource's earlier versions, not only its latest,** as Lumenize's temporal model keeps them (Larry, 2026-10-25). A change adds a version, and a deletion adds one marked deleted. The `patch` form patches from them, and Q1 weighs what else they give.
+  - **A keeps each resource's earlier versions, not only its latest,** as Lumenize's temporal model keeps them (Larry, 2026-10-25). A change adds a version, and a deletion adds one marked deleted. The `patch` form patches from them, and a collection's catch-up reads its members' newest versions from them. A forgets earlier versions and deletions once they are older than its cut-off window, a setting of A's, a day by default, which the page can shorten to show a reset.
   - **A list is the second type,** `{ "title": "Groceries", "items": ["oat milk"] }`, so that a template can match across types.
 - **B is a gateway, and stores nothing.** It receives webhooks for each of its clients at a URL of that client's own, `/gateway/B/hooks/{client}`, the path shape SEP-3415's own examples use, and passes each one down that client's WebSocket. Each socket carries its client's secret in its attachment, so B writes nothing, as Lumenize's Gateway writes nothing. B never calls A, and holds no principal there.
   - **SEP-3415 calls the receiving party a forward proxy in some places and a gateway in others.** § *Webhook-Based Delivery* and Appendix B say forward proxy, and Appendix A and the delivery profile say gateway. This design says gateway. Unlike the proxy of § *Webhook-Based Delivery*, which serves events to its clients by poll or push and so buffers them, B passes each delivery straight down its client's socket and keeps none. Lumenize's Gateway also carries a client's calls up to the nodes, and this one carries only deliveries down, since `b` calls A itself.
@@ -165,11 +165,11 @@ Several values in SEP-3415 and this design look alike: opaque strings a client i
 | `webhook-id`, as `msg_2Lq8…` | An identity: one delivered message, the same on every retry of it. | The receiver drops a retry it already accepted. | Both levels (R14). |
 | The subscription `id`, as `sub_a3f1…` | An identity: one subscription, derived from its key. | The receiver reads it from `X-MCP-Subscription-Id` to pick the secret that verifies a delivery. | Both levels (R25). |
 | `version`, as `v2` | An identity: one state of one resource. It is the resource's strong `ETag`, written without its quotes. | In HTTP, a client sends it in `If-None-Match` on a `GET`, answered `304 Not Modified` while it is current, and in `If-Match` on a `PUT`, refused with `412 Precondition Failed` if someone else wrote first. Here, a client names the version it holds on a refresh, and ignores a delivery of one it holds. | Level 2, and the `ETag` of Scenario 1b. |
-| A change cursor | A position in the order of one collection's changes. | The client sends the one from its last refresh, and gets the members changed since. | Option (b) of Q1. |
+| A change cursor | A position in the order of one collection's changes. | The client sends the one from its last refresh, and gets the members changed since. | A collection's refresh, in § *Collections*. |
 
 - **The watermark lags because webhook deliveries overlap.** A posts each event as it happens and retries each on its own, so deliveries can land out of order. Say events 41, 42 and 43 go out, and 42's first attempt fails while 41 and 43 succeed. If 43's delivery carried `cursor_0043`, a client that kept it and later replayed from it would never get 42. So it carries `cursor_0041`, and only a delivery or refresh after 42 is accepted, or abandoned, carries `cursor_0043`. Poll and push hand out events in order, so there the cursor after an event is that event's own position.
 - **Each subscription has its own watermark,** because each has its own deliveries in flight. If a second subscriber's receiver took 42 the first time, its delivery of 43 already carries `cursor_0043`. SEP-3415 has the server hold, per subscription, the position and acceptance of each event in flight. That state is in memory, and after a restart the client's refresh, naming the cursor it kept, rebuilds it.
-- **The paging cursor is a different thing again.** MCP's list methods, such as `resources/list`, return `nextCursor` when a result runs to more than one page, and the client sends it back as `cursor` for the next page. It is a position in one listing, not in any order of changes, so it tells a client nothing about what changed between two reads. Q2 asks which kind of cursor a collection's catch-up would page with.
+- **The paging cursor is a different thing again.** MCP's list methods, such as `resources/list`, return `nextCursor` when a result runs to more than one page, and the client sends it back as `cursor` for the next page. It is a position in one listing, not in any order of changes, so it tells a client nothing about what changed between two reads. A collection's catch-up pages with its change cursor instead, as § *Collections* shows.
 
 ### Level 1: `mcp.resource.updated` over Events
 
@@ -275,7 +275,7 @@ A resource is state, and a watcher wants to hold its newest version, not to witn
 
 - **The server may coalesce.** A delivery still pending when a newer version lands is replaced by it, and a lost delivery is repaired by the next one.
 - **The design keeps no log of events** (Larry, 2026-10-25). A client needs a resource's newest version, not the steps that led to it, so every catch-up is answered from the resources' own versions, and none replays changes in order. A keeps each resource's earlier versions for the `patch` form, but those are its values, not a record of events.
-- **One resource needs only versions,** never a cursor, since a version already says which state a client holds (§ *Cursors, versions and IDs*). Whether a collection needs a change cursor is Q1 in § *Open questions*, and a cursor for paging is Q2.
+- **One resource needs only versions,** never a cursor, since a version already says which state a client holds (§ *Cursors, versions and IDs*). A collection's catch-up adds a change cursor, as § *Collections* shows.
 - **The server never stores a delivery position per subscription.** It does not record which version each subscriber last acknowledged (Larry, 2026-10-21). On a Durable Object, writes are the most expensive operation: with 1000 subscriptions, recording acknowledgements would turn one write per change into 1000. A subscription's record is written when it is created and when it is refreshed. Other services that sync state over webhooks work the same way: Dropbox, Google Drive and Calendar, Gmail and Microsoft Graph keep no delivery position per subscriber, call their pushes lossy, and leave catching up to the client.
 - **Retry queue status per subscription is kept in memory, not storage.**
   - **What it holds:** for each subscription and URI, the pending version and its attempts so far. Coalescing keeps that to one entry.
@@ -454,10 +454,12 @@ At 16:10, `b` subscribes to A's inbox in the `notify` form, holding none of it y
             "delivery": { "url": ".../gateway/B/hooks/b", "secret": "whsec_..." } }
 // A → b
 { "resultType": "complete", "id": "sub_5d02e7a9c1b84f36",
-  "refreshBefore": "2026-10-21T17:10:00Z" }   // what else: Q1
+  "refreshBefore": "2026-10-21T17:10:00Z",
+  "changes": [],                  // the inbox is empty since Scenario 8
+  "cursor": "c1" }
 ```
 
-`a` creates note-43 in the inbox, and A delivers it through B like any change, naming the sub-resource:
+At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any change, naming the sub-resource:
 
 ```jsonc
 { "uri": ".../server/A/notes/inbox/note-43", "form": "notify", "version": "v1" }
@@ -465,7 +467,33 @@ At 16:10, `b` subscribes to A's inbox in the `notify` form, holding none of it y
 
 - **A new member is a change from nothing,** and a removed one is a deletion, so a collection subscription needs no list-changed signal of its own.
 - **The other two targets deliver the same way.** A `uriTemplate` target, such as `.../server/A/{type}/archive`, covers every type's archive. A `listed` target covers the inbox's notes, which are all that `resources/list` returns here. Each delivery names the member's own `uri`.
-- **Catching up is the open part.** For one resource, the version a subscriber names on a refresh is enough. For a collection, `b` needs to learn which members changed while it was away, and which were deleted. Q1 and Q2 take that up.
+- **A subscription from nothing names no cursor,** and its result lists every member that exists, at its newest version.
+
+##### Scenario 10: catching up a folder
+
+`b` holds note-43 at `v1`, and its last result named cursor `c1`. `b`'s laptop sleeps from 16:20. Meanwhile `a` edits note-43 twice, creates note-44, and then deletes note-43, and A's retries run out. At 16:50, inside its grant, `b` refreshes, naming the cursor:
+
+```jsonc
+// b → A
+"params": { "uri": ".../server/A/notes/inbox", "form": "notify", "cursor": "c1",
+            "delivery": { "url": ".../gateway/B/hooks/b", "secret": "whsec_..." } }
+// A → b
+{ "resultType": "complete", "id": "sub_5d02e7a9c1b84f36",
+  "refreshBefore": "2026-10-21T17:50:00Z",
+  "changes": [
+    { "uri": ".../server/A/notes/inbox/note-43", "form": "notify",
+      "version": "v4", "deleted": true },
+    { "uri": ".../server/A/notes/inbox/note-44", "form": "notify",
+      "version": "v1" } ],
+  "cursor": "c6" }
+```
+
+- **Each member comes back once, at its newest version.** note-43 changed three times and was then deleted, and `b` gets only the deletion. A answers from each member's newest version, so nothing replays the steps between, as § *Only the newest version matters* says.
+- **Deliveries carry no cursor,** so note-43's delivery at 16:15 left `b`'s cursor at `c1`. A cursor in a delivery would have to be a watermark, since deliveries overlap. A refresh can therefore return a member `b` already holds, and `b` skips it by its version.
+- **`c1` and `c6` are opaque.** A server that stamps its versions from one counter MAY use the version as the cursor, as Kubernetes stamps an object's and a list's `resourceVersion` from etcd's one revision. `b` never compares either (R36).
+- **A cursor A can no longer serve gets every member, with `reset: true`.** A forgets deletions older than its cut-off window, so for an older cursor it cannot say what was deleted. It lists every member that exists instead, and `b` drops any it holds that the reset does not list. A never answers a stale cursor with `410`, which SEP-3415 gives a receiver's answer.
+- **A long catch-up comes in pages.** A result with `hasMore: true` stops partway, and `b` refreshes again with its `cursor`, as `events/poll` drains a backlog with `hasMore`. A reset pages the same way, its cursor then a place in the listing.
+- **This is how state-sync services catch up.** Dropbox's `cursor`, Drive's `pageToken`, Calendar's `syncToken`, Gmail's `historyId` and Graph's `deltaLink` are each a cursor the client holds. Dropbox, Calendar, Gmail and Graph answer one too old for them by having the client start over, as a reset does here.
 
 #### Who may subscribe
 
@@ -508,18 +536,23 @@ type SubscriptionTarget =
   | { listed: true };                   // every resource resources/list returns
 type ResourceWebhookSubscribeParams = SubscriptionTarget & {
   form?: "notify" | "full";             // notify when omitted
-  version?: string;                     // a uri target's version the client holds
+  version?: string;                     // one resource: the version held
+  cursor?: string;                      // a collection: the last result's cursor
   delivery: { url: string; secret: string };
   ttlMs?: number | null;                // as SEP-3415's events/subscribe
 };
 interface ResourceWebhookSubscribeResult {
   id: string;
   refreshBefore: string | null;
-  version?: string;                     // a uri target's current version
+  version?: string;                     // one resource: its current version
   deleted?: true;                       // that version deleted the resource
   contents?: ResourceContents[];        // full form, if the version differs
+  changes?: ResourceChange[];           // a collection: each member changed
+                                        // since the cursor, at its newest version
+  cursor?: string;                      // a collection: where this result stops
+  hasMore?: true;                       // more changes: refresh again with cursor
+  reset?: true;                         // changes lists every member there is
   deliveryStatus?: DeliveryStatus;      // as SEP-3415 defines it
-  // A collection's catch-up adds fields here: Q1.
 }
 type ResourceWebhookUnsubscribeParams = SubscriptionTarget & {
   delivery: { url: string };
@@ -551,7 +584,7 @@ type ResourceChange = { uri: string } & (
   - **The subscription `id`** is a keyed hash of the key, so a logged `id` cannot be used to test a guessed principal.
   - **The body.** A `ResourceChange` takes the place of an `EventOccurrence`.
   - **The retry model.** Only the newest version of each URI is retried, with pending versions coalesced, where SEP-3415 retries each event on its own.
-  - **No replay, no `gap` envelope and no `truncated` for one resource.** The version a subscriber names on each refresh does their work. Whether a collection needs a cursor is Q1.
+  - **No replay, no `gap` envelope and no `truncated` for one resource.** The version a subscriber names on each refresh does their work. A collection's catch-up uses this extension's own cursor (§ *Collections*).
 - **Its error codes, reused as SEP-3415 intends.** It calls its five new codes general-purpose, "named for reuse across MCP and are not scoped to events". So this extension answers an undeclared form with `Unsupported`, a refused principal with `Forbidden`, an unsubscribe that matches nothing with `NotFound`, a server limit with `ResourceExhausted`, and a callback that fails verification with `CallbackEndpointError`. An unknown URI is refused with `-32602`, as `resources/read` refuses it.
 - **Not used:** `events/list`, `events/poll` and `events/stream`. Level 1 uses Events' methods, and level 2 uses its own.
 
@@ -564,6 +597,7 @@ type ResourceChange = { uri: string } & (
 - **How a template matches a URI.** RFC 6570 defines expanding a template, not matching one. The working rule is that each simple `{name}` matches exactly one path segment.
 - **Whether one delivery in flight per URI,** rather than per subscription, keeps a busy collection's deliveries flowing.
 - **Whether `listed` should also cover resources that only a template reaches.**
+- **How big a reset gets,** and whether a cut-off window of a day keeps resets rare for a subscriber that refreshes on time.
 - **What a coalesced patch starts from.** When `v4` replaces a pending `v3`, as in Scenario 6, a patch from `v3` is one `b` cannot apply if it never got `v3`, so `b` refreshes. Whether that is rare enough to accept is what the prototype measures.
 - **Whether refreshing on every reconnect is enough** for a client behind a gateway, or B should also say what it could not pass on, as Lumenize's Gateway tells a reconnecting client `subscriptionRequired`.
 - **What a merge patch means** when `contents` holds several entries, or a text body whose type is JSON.
@@ -587,17 +621,6 @@ type ResourceChange = { uri: string } & (
 
 ## Open questions
 
-1. **Q1. How does a subscription to a collection catch up after a gap?** `b` was away past A's retries, and it needs to learn which members changed or were deleted meanwhile.
-   - **(a) The whole member list.** The collection has a version, and when `b`'s differs, the refresh result lists every current member's `uri` and `version`. A deleted member shows by its absence. Nothing needs an order, but every catch-up costs as much as the collection is big.
-   - **(b) Changes since a cursor.** Each refresh result carries a cursor: a position in the order of the collection's changes. Deliveries carry none, because a cursor in a delivery would need a watermark, as § *Cursors, versions and IDs* shows. Dropbox's notification names only the account, and the app calls `files/list_folder/continue` with the cursor it stored. Gmail's names the mailbox's newest `historyId`, and the client keeps it only once `history.list` has brought it up to date. A refresh naming `b`'s cursor returns only the members changed since, deletions included, and `b` skips any it already holds by version. A needs one order across the collection's changes and a memory of its deletions, and answers a cursor older than that memory with (a). This is carried from the predecessor.
-   - **(c) Versions that sort.** If every version in a collection came from one ordered counter, "changed since version X" would need no second value, as Kubernetes' `resourceVersion` and etcd's revisions work. But an `https` resource's version is its `ETag`, which nothing can require to sort, and the predecessor's Lumenize notes record how per-resource timestamps fail as one order.
-   - **Recommendation:** (b), with (a) as its fallback. It is the dominant pattern for syncing state over webhooks: Dropbox's `cursor`, Drive's `pageToken`, Calendar's `syncToken`, Gmail's `historyId` and Graph's `deltaLink` are each a change cursor the client holds, and each service answers one too old for its history with a reset. A server MAY make a cursor and a version one value, as Kubernetes does, but a client never relies on that. The same request without a webhook would be a poll for collections, which this extension leaves out for now, so the prototype should also say whether a collection needs one.
-   - **Against (b), SEP-3415's rationale.** A change cursor is the cursor it says resources lack, so (b) has to show that a collection, unlike one resource, has an order of changes worth naming. (a) adds no cursor, at a cost that grows with the collection.
-   - **The reset is not a `410`.** Calendar, Graph and Kubernetes answer a stale cursor with HTTP `410 Gone`, but SEP-3415 says a server "MUST treat `410` as a non-retryable failure for that delivery", "without affecting the subscription itself". This extension's reset would be a field in the refresh result, so that `410` keeps one meaning.
-2. **Q2. Do catch-up responses page, and with which cursor?** A cursor over a stream of changes is a position in time, so paging through one returns changes in order. A cursor over a listing, as `resources/list` pages, is a position in the listing, with no order in time.
-   - **Under (b) of Q1, the change cursor pages too.** A response carries as many changes as fit, says whether more remain, and its cursor resumes there, as `events/poll` does with `hasMore`.
-   - **Under (a), or (b)'s fallback, a member list pages** with a listing cursor, as `resources/list` does.
-   - **Recommendation:** decide it with Q1. Under (b), one cursor does both jobs while A remembers enough, and a listing cursor serves only the fallback.
 3. **Q3. What are the names?** The extension identifier `io.modelcontextprotocol/resource-webhooks`, the methods `resources/webhooks/subscribe` and `resources/webhooks/unsubscribe`, and the target `listed`.
    - **The methods' prefix:** `resources/` belongs to the core specification, and an extension may need a prefix of its own, as SEP-3415 reserves `events/`.
    - **Recommendation:** keep these names, and ask about the prefix in the PR.
@@ -619,6 +642,8 @@ type ResourceChange = { uri: string } & (
 | Level 1 offers no replay: its cursors are `null`, as SEP-3415 allows for a type without one (Larry, 2026-10-25) | Replay from an in-memory buffer: a log of events and a watermark per subscription, built only to show that state sync does without them. Replay from a durable log: a storage write for every change. |
 | This extension leaves polling out, for now (Larry, 2026-10-20) | A poll method: an `https` resource is already polled with a conditional `GET`, and level 1's type could offer `events/poll`, though A keeps no log of events to serve it from. |
 | Collections are in scope: a folder, a URI template, or every listed resource (Larry, 2026-10-20) | Deferring them: they raise the questions only an implementation answers, which is what a prototype is for. |
+| A collection's refresh returns each member changed since the cursor of the subscriber's last result, once, at its newest version, deletions included. Only results carry the cursor, and one A can no longer serve gets every member, marked `reset` (Larry, 2026-10-25) | The whole member list on every catch-up: as big as the collection each time. A log of events to replay: a client needs each member's newest version, not the steps. Versions that must sort, as Kubernetes' `resourceVersion` does: an `https` resource's version is its `ETag`, which nothing can require to sort, though a server MAY use one value for both (R36). A cursor in each delivery: it would need a watermark. HTTP `410` for a stale cursor: SEP-3415 gives a receiver's `410` its own meaning. |
+| A long catch-up pages with its cursor and `hasMore`, as `events/poll` does, and a reset pages the same way (Larry, 2026-10-25) | A second cursor for a reset's pages, as `resources/list` pages: two fields where one opaque value serves. |
 | Subscribing requires an authenticated principal, as SEP-3415 does, from MCP's OAuth flow with an authorization server that verifies no identity, as Peter's reference server has (Larry, 2026-10-20) | Anonymous callers sharing one principal: any of them could unsubscribe another or replace its secret. A login endpoint handing out a random token: the same idea outside the OAuth flow every MCP client already speaks. Requiring the old secret to unsubscribe or rotate: a client that lost its secret could only wait out the TTL, and the secret, held by gateways, would become a credential. |
 | Endpoint verification is cached per `(principal, delivery.url, delivery.secret)` (Larry, 2026-10-20) | Per `(principal, url)`, as SEP-3415 does: a principal that verified a webhook URL once could subscribe it again with a secret the receiver never held, and flood it. Per `(url, secret)` alone: two principals holding one secret would share a verification, which SEP-3415 rules out. |
 | The server stores no per-subscription record of the version each subscriber acknowledged, and a patch starts from the resource's previous version (Larry, 2026-10-21) | Recording acknowledgements: on a Durable Object, one change watched by 1000 subscriptions would cost 1000 writes instead of one, writes being the most expensive operation, while a refresh on reconnect repairs a miss. No service that syncs state over webhooks records a delivery position per subscriber either. |
