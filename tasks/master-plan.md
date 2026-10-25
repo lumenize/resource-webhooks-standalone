@@ -576,7 +576,7 @@ Run Scenario 10 again with A's cut-off window at 10 minutes, and say `a` deleted
   "cursor": "c6" }
 ```
 
-`b` drops note-43, since the reset does not list it.
+`b` drops note-43, since the reset does not list it. A subscriber that refreshes on time never sees a reset at A's default window: its cursor moves only on refresh results, so it is at most about an hour old, the grant's length, and A keeps a day of rows.
 
 #### Who may subscribe
 
@@ -691,10 +691,8 @@ type ResourceChange = { uri: string } & (
 - **Whether level 2 reuses level 1's webhook code unchanged, apart from the queue,** which tests Goal 7.
 - **Where a resource with no `ETag` gets its version,** for the phase on resources outside `https`, and whether a `_meta` key carries it.
 - **What counts as a sub-resource.** The working rule is one or more path segments beyond the subscribed URI, and the question is whether servers need anything else.
-- **How a template matches a URI.** RFC 6570 defines expanding a template, not matching one. The working rule is that each simple `{name}` matches exactly one path segment.
-- **Whether one delivery in flight per URI,** rather than per subscription, keeps a busy collection's deliveries flowing.
+- **How a template matches a URI.** RFC 6570 defines expanding a template, not matching one. R19's working rule is that a simple `{name}` matches one path segment and `{+name}` one or more, and the question is whether servers need more.
 - **Whether `listed` should also cover resources that only a template reaches.**
-- **How big a reset gets,** and whether a cut-off window of a day keeps resets rare for a subscriber that refreshes on time.
 - **What a coalesced patch starts from.** When `v4` replaces a pending `v3`, as in Scenario 6, a patch from `v3` is one `b` cannot apply if it never got `v3`, so `b` refreshes. Whether that is rare enough to accept is what the prototype measures.
 - **Whether refreshing on every reconnect is enough** for a client behind a gateway, or B should also say what it could not pass on, as Lumenize's Gateway tells a reconnecting client `subscriptionRequired`.
 - **What a merge patch means** when `contents` holds several entries, or a text body whose type is JSON.

@@ -91,6 +91,7 @@ These notes are for the design's second level, resource state sync. The first le
 - **The `_meta` key** under which `resources/read` carries the version of a resource without an `https` URI, to be agreed with the Filesystems working group, with the Transports working group's Definition Tags in view.
 - **The `patch` form's rules,** written in its phase.
 - **Two gaps inherited from SEP-3415:** which base64 alphabet the secret uses, and whether a result should also return the granted TTL, since `refreshBefore` is a clock time and a client's clock can be skewed.
+- **Whether one delivery in flight per URI keeps a busy collection's deliveries flowing,** a question for the PR, since the prototype has no such load (R12).
 - **A flood SEP-3415 leaves open, for the PR.** Through the allowlist, out-of-band verification or the receiver's well-known document, a principal can aim deliveries at a receiver that never held its secret. The receiver can only reject them, and SEP-3415 retries a rejection, suspends only after a sustained failure rate, and lets a refresh reactivate the subscription. A rule closes it: a receiver answers a delivery it cannot verify with `401`, and a server treats that as consent withdrawn, stops delivering, and forgets its verification for `(principal, url)`, so the next subscribe needs a handshake the receiver can refuse.
 
 ## Out of scope, to list in the SEP
