@@ -977,10 +977,9 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 
 ### Phase 1
 
-**For Larry.** One question, and five things this phase changed that the plan had decided, all made the plan's text now.
+**For Larry.** Five things this phase changed that the plan had decided, all made the plan's text now, and one dependency added since.
 
-- **May I add `@types/node` 24 as a development dependency?** It arrives today through `vitest` at 26.6.5, two majors past the Node 24 that `.nvmrc` names, and Lumenize's `packaging.md` says it must track the runtime major. Only the Node-side tests use it, for `node:http` and `node:fs`.
-
+- **`@types/node` is a development dependency at `^24`, as in Lumenize's root `package.json`** (Larry, 2026-10-25). It had arrived through `vitest` at 26.6.5, two majors past the Node 24 that `.nvmrc` names.
 - **`run_worker_first` is gone, and the Decisions table says why.** With no `not_found_handling`, a navigation that matches no asset already reaches the Worker, so the setting changed nothing and its mutation could not fail. The navigation test now fails when the `single-page-application` fallback is configured, which is the hazard Stage 2 named.
 - **`Gateway` is registered in phase 4, where B is built,** so phase 1 carries no empty class.
 - **The fetch spy calls the Worker's handler with an env of the test's own,** not `exports.default.fetch`, which takes no env, so each test's own instance name reaches the edge. It finds that env by the instance the request names, so a late retry reaches its own test's A.
