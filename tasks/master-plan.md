@@ -796,14 +796,14 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
      - A's core methods of § *The cast*, `write_note`'s precondition and result among them
      - a `test-*` Worker, deployed or local, with the suite's fixtures behind the `CONFORMANCE` secret, which join `resources/list` only there
    - **Success criteria:**
-     - Scenario 1a runs as a test. Mutation: name a version in the read's result.
+     - Scenario 1a runs as a test, until phase 10 adds the `_meta` version and updates it. Mutation: name a version in the read's result.
      - The spec's 129 example messages each pass validation, and one with a member removed fails it. Mutation: validate nothing.
      - A request without the `_meta` envelope answers `400` with `-32602`, one whose `Mcp-Name` disagrees with its body answers `400`, an unknown method answers `404` with `-32601`, and a notification answers `202`. Mutation: drop each check in turn.
      - `write_note` with a stale `version` answers `isError: true`, and A's rows are unchanged after it. Mutation: skip the precondition.
      - The suite's server scenarios for `--requirements 2026-07-28` pass on the `test-*` Worker, except those its `conformance-baseline.yml` lists, each with its reason. Mutation: remove a core method.
 3. **The authorization server, and tokens at the edge.** This gives every client its own principal, so subscriptions are keyed by who asked.
    - **Builds:**
-     - the authorization server module of § *Who may subscribe*: registration, an instant consent, PKCE, tokens signed with a Worker secret and naming their audience and epoch, and the metadata documents at the origin's root
+     - the authorization server module of § *Who may subscribe*: registration, an instant consent, PKCE, tokens signed with a Worker secret and naming their audience, A's MCP endpoint or B's socket, and their epoch, and the metadata documents at the origin's root
      - `onBeforeRequest` on A's routes, by the route table
      - `mcp-client.ts`, the client module `a`, `b` and the tests share, using only `fetch` and Web Crypto
      - **Exploratory, with both paths pinned:** the suite's server mode takes only a `--url`. The phase first reads how the 2026-07-28 requirement set's scenarios authenticate. If the suite gets a token from A's authorization server, it runs against the protected endpoint. If it cannot, the `CONFORMANCE` secret on the `test-*` Worker lets it through without a token, and the scenarios about protected resources run against the protected endpoint.
@@ -817,7 +817,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
      - A's webhook module: Standard Webhooks signing with the subscriber's `whsec_` secret, the verification handshake cached per `(principal, url)` in memory, the retry queue in memory with A's schedule as a setting, `redirect: "manual"` with any `3xx` a failure, and `410` and `413` as answers that stop retrying
      - B's two routes: the webhook receiver, which verifies, passes a delivery down its client's socket, and answers `401` or `503` as § *The leg between the gateway and its client* says; and the socket, with `onBeforeConnect` and the secret's registration, from which B answers a handshake itself
      - the Events types, written in the spec's style from SEP-3415 at b0efd11, which ships no TypeScript, with JSON Schema generated as in phase 1
-     - `events/list`, `events/subscribe` and `events/unsubscribe` for `mcp.resource.updated`, with `cursor: null`, lazy expiry, and `Unsupported` for `events/poll` and `events/stream`
+     - `io.modelcontextprotocol/events` declared with an empty settings object, and `events/list`, `events/subscribe` and `events/unsubscribe` for `mcp.resource.updated`, with `cursor: null`, lazy expiry, and `Unsupported` for `events/poll` and `events/stream`
      - the back channel from A and B, which every later phase's tests watch through, and the operator token for the page's controls
      - local delivery over `wrangler dev --local-protocol https`, with A posting to its own origin, a claim the phase checks first
    - **Success criteria:**
@@ -882,7 +882,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
     - **Success criteria:**
       - After a `notify` delivery of a list, a `resources/read` of it returns the delivered version or a later one in `_meta`. Mutation: omit the key.
       - A `GET` of a `lists:///` resource has no route, and the resource has no `ETag`. Mutation: none; the test guards the scheme.
-      - Every read A serves carries the `_meta` version, `https` included. Mutation: add it only outside `https`.
+      - Every read A serves carries the `_meta` version, `https` included, and Scenario 1a's test and bullet now show it. Mutation: add it only outside `https`.
 11. **The PR's proposal.** This turns the prototype's notes into what the working group reads.
     - **Builds:** `proposals/XXXX-resource-webhooks.md` on the `resource-webhooks` branch of `../experimental-ext-triggers-events`, synced with `upstream` first, in the shape § *Relationships* gives; `sep-notes.md` § *Findings* filled for every item of § *What building it should teach us*
     - **Success criteria:**
