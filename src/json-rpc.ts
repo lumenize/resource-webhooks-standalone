@@ -55,8 +55,9 @@ export function classify(value: unknown): Classified {
     throw new JsonRpcError(INVALID_REQUEST, 'Invalid Request: params must be an object');
   }
   if (!('id' in message)) return { kind: 'notification', message: message as unknown as JSONRPCNotification };
-  if (typeof message.id !== 'string' && typeof message.id !== 'number') {
-    throw new JsonRpcError(INVALID_REQUEST, 'Invalid Request: id must be a string or a number');
+  // schema.json allows a string or an integer, narrower than schema.ts's `number`.
+  if (typeof message.id !== 'string' && !Number.isInteger(message.id)) {
+    throw new JsonRpcError(INVALID_REQUEST, 'Invalid Request: id must be a string or an integer');
   }
   return { kind: 'request', message: message as unknown as JSONRPCRequest };
 }

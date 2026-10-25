@@ -62,7 +62,6 @@ it('routes only the instance it names, and only the paths and methods its table 
     ['GET', `/server/${lane.name}`],
     ['GET', `/server/${lane.name}/`],
     ['GET', `/server//${lane.name}/notes/inbox/note-1`],
-    ['POST', `/server/${lane.name}/notes/inbox/note-1`, { body: '{}' }],
     ['GET', `/server/${lane.name}/elsewhere`],
     ['GET', `/server/${lane.name}/notesx`],
     ['GET', `/server/${lane.name}/notes/inbox/note-1`, { headers: { Upgrade: 'websocket' } }],
@@ -75,4 +74,19 @@ it('routes only the instance it names, and only the paths and methods its table 
   }
   expect(await serverIds()).toEqual(before);
   expect((await lane.fetch('/notes/inbox/note-1')).status).toBe(200);
+});
+
+it('answers a method the table does not list for a path it does with 405, naming the ones it does', async () => {
+  const lane = newLane();
+  const before = await serverIds();
+  const refused: [string, string, string][] = [
+    ['POST', '/notes/inbox/note-1', 'GET, HEAD, PUT, DELETE'],
+    ['GET', '/mcp', 'POST'],
+    ['DELETE', '/mcp', 'POST'],
+  ];
+  for (const [method, path, allow] of refused) {
+    const response = await lane.fetch(path, { method, body: method === 'POST' ? '{}' : undefined });
+    expect({ method, path, status: response.status, allow: response.headers.get('Allow') }).toEqual({ method, path, status: 405, allow });
+  }
+  expect(await serverIds()).toEqual(before);
 });

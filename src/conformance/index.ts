@@ -13,7 +13,11 @@ export class Server extends DemoServer {
 
 export default {
   fetch(request: Request, env: ConformanceEnv): Promise<Response> | Response {
-    if (env.CONFORMANCE !== 'on') return new Response('This Worker serves only a conformance run', { status: 503 });
+    // Deployed by mistake, it still serves nothing: no deployed host is localhost.
+    if (env.CONFORMANCE !== 'on' || new URL(request.url).hostname !== 'localhost') {
+      // 403, as the suite's DNS-rebinding check expects of a request naming another host.
+      return new Response('This Worker serves only a local conformance run', { status: 403 });
+    }
     return handleRequest(request, env);
   },
 };

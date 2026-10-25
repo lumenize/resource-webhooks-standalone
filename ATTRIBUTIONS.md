@@ -14,4 +14,5 @@ Larry Maccherone wrote these and owns their copyright, published them under the 
 Adapted from [modelcontextprotocol/modelcontextprotocol](https://github.com/modelcontextprotocol/modelcontextprotocol) at commit `dae694f6`, whose license is moving from MIT to Apache-2.0, as its `LICENSE` file describes.
 
 - **`src/vendor/mcp-spec/2026-07-28/`** holds `schema/2026-07-28/schema.ts`, `schema.json` and the 129 files of `examples/`, copied unchanged except for a two-line header on `schema.ts`.
+- **`src/conformance/fixtures.ts`** reproduces the tool names, resource URIs and strings that the server scenarios of [`@modelcontextprotocol/conformance`](https://github.com/modelcontextprotocol/conformance) 0.2.0-alpha.12, under the MIT License, ask a server to implement.
 - **`scripts/generate-schemas.mjs`** follows `scripts/generate-schemas.ts`: the same `typescript-json-schema` flags, the same rewrite to JSON Schema 2020-12, and the same `--check` comparison.

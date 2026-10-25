@@ -2,6 +2,7 @@ import { runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { headerValue, McpError } from '../../src/client/mcp-client';
 import { SERVER_INFO } from '../../src/server-role/server-role';
+import { specErrors } from '../../src/server-role/validation';
 import { newLane, type Lane } from './lane';
 
 const META = { 'io.modelcontextprotocol/serverInfo': SERVER_INFO };
@@ -123,9 +124,29 @@ describe('the core methods', () => {
     expect(JSON.stringify(refused.data)).toContain('uri');
   });
 
-  it('answers an unknown method with 404 and -32601', async () => {
+  it('answers an unknown method with 404 and -32601, a name on Object.prototype included', async () => {
     const lane = newLane();
-    expect(await refusal(lane.client.request('prompts/list'))).toMatchObject({ status: 404, code: -32601 });
+    for (const method of ['prompts/list', 'constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      const refused = await refusal(lane.client.request(method));
+      expect({ method, status: refused.status, code: refused.code }).toEqual({ method, status: 404, code: -32601 });
+    }
+  });
+
+  it("answers every core method with a result the spec's schema accepts", async () => {
+    const lane = newLane();
+    const uri = `${lane.root}/notes/inbox/note-42`;
+    const results: [string, string, Record<string, unknown>?][] = [
+      ['CallToolResult', 'tools/call', { name: 'write_note', arguments: { uri, note: { title: 'Buy milk' } } }],
+      ['DiscoverResult', 'server/discover'],
+      ['ListToolsResult', 'tools/list'],
+      ['ListResourcesResult', 'resources/list'],
+      ['ListResourceTemplatesResult', 'resources/templates/list'],
+      ['ReadResourceResult', 'resources/read', { uri }],
+    ];
+    for (const [definition, method, params] of results) {
+      const result = await lane.client.request(method, params);
+      expect({ method, errors: specErrors(definition, result) }).toEqual({ method, errors: [] });
+    }
   });
 
   it('refuses an unknown tool with -32602', async () => {
@@ -294,6 +315,7 @@ describe('JSON-RPC 2.0 examples', () => {
     const invalid = [
       { jsonrpc: '1.0', id: 1, method: 'tools/list', params: { _meta: ENVELOPE } },
       { jsonrpc: '2.0', id: null, method: 'tools/list', params: { _meta: ENVELOPE } },
+      { jsonrpc: '2.0', id: 1.5, method: 'tools/list', params: { _meta: ENVELOPE } },
       { jsonrpc: '2.0', id: 1, method: 'tools/list', params: 'bar' },
       { jsonrpc: '2.0', id: 1, result: { resultType: 'complete' } },
     ];

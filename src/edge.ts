@@ -1,5 +1,6 @@
 // The Worker's edge. It refuses any other origin before an object wakes, and routes only what
-// its table lists, by path and method, to the one instance it names. Anything else is 404.
+// its table lists, by path and method, to the one instance it names. A path it does not list is
+// 404, and a method it does not list for a path it does is 405.
 import {
   applyCorsPolicy,
   MissingInstanceNameError,
@@ -67,12 +68,13 @@ function routeGuard(
   const { pathname } = new URL(request.url);
   if (!pathname.startsWith(`${root}/`)) return notFound();
   const path = pathname.slice(root.length);
-  const listed = SERVER_ROUTES.some(
-    (route) =>
-      route.path.test(path) &&
-      (websocket ? route.methods === 'websocket' : route.methods !== 'websocket' && route.methods.includes(request.method)),
-  );
-  return listed ? undefined : notFound();
+  const routes = SERVER_ROUTES.filter((route) => route.path.test(path) && (route.methods === 'websocket') === websocket);
+  if (routes.length === 0) return notFound();
+  if (websocket) return undefined;
+  const methods = routes.flatMap((route) => route.methods as readonly string[]);
+  // A path the table lists, asked with a method it does not, as a GET of the MCP endpoint.
+  if (!methods.includes(request.method)) return new Response('Method Not Allowed', { status: 405, headers: { Allow: methods.join(', ') } });
+  return undefined;
 }
 
 function notFound(): Response {

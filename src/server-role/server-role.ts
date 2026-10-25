@@ -87,20 +87,21 @@ export class ServerRole {
   readonly store: VersionStore;
   readonly #root: string;
   readonly #extras: ServerExtras;
-  readonly #methods: Readonly<Record<string, (params: Record<string, unknown>) => Result>>;
+  // A Map, so a method named after something on Object.prototype, as `constructor`, finds nothing.
+  readonly #methods: ReadonlyMap<string, (params: Record<string, unknown>) => Result>;
 
   constructor({ sql, root, cutoffWindowMs, extras = {} }: ServerRoleOptions) {
     this.store = new VersionStore(sql, { cutoffWindowMs });
     this.#root = root;
     this.#extras = extras;
-    this.#methods = {
-      'server/discover': () => this.#discover(),
-      'tools/list': (params) => this.#listTools(params),
-      'tools/call': (params) => this.#callTool(params),
-      'resources/list': (params) => this.#listResources(params),
-      'resources/templates/list': (params) => this.#listTemplates(params),
-      'resources/read': (params) => this.#read(params),
-    };
+    this.#methods = new Map<string, (params: Record<string, unknown>) => Result>([
+      ['server/discover', () => this.#discover()],
+      ['tools/list', (params) => this.#listTools(params)],
+      ['tools/call', (params) => this.#callTool(params)],
+      ['resources/list', (params) => this.#listResources(params)],
+      ['resources/templates/list', (params) => this.#listTemplates(params)],
+      ['resources/read', (params) => this.#read(params)],
+    ]);
   }
 
   /**
@@ -109,7 +110,7 @@ export class ServerRole {
    * request A cannot answer.
    */
   handle(request: JSONRPCRequest): Result {
-    const method = this.#methods[request.method];
+    const method = this.#methods.get(request.method);
     if (!method) throw new JsonRpcError(METHOD_NOT_FOUND, `Method not found: ${request.method}`);
     const errors = specErrors(REQUEST_DEFINITIONS.get(request.method)!, request);
     if (errors.length > 0) throw new JsonRpcError(INVALID_PARAMS, 'Invalid params', errors.slice(0, 10));
@@ -127,7 +128,7 @@ export class ServerRole {
   }
 
   #listTools(params: Record<string, unknown>): ListToolsResult {
-    refuseCursor(params);
+    requireNoCursor(params);
     return { resultType: 'complete', tools: [WRITE_NOTE, DELETE_NOTE, ...(this.#extras.tools ?? []).map(({ tool }) => tool)], ...UNCACHED };
   }
 
@@ -161,13 +162,13 @@ export class ServerRole {
   }
 
   #listResources(params: Record<string, unknown>): ListResourcesResult {
-    refuseCursor(params);
+    requireNoCursor(params);
     const own = [...this.store.members('/notes/inbox'), ...this.store.members('/lists')].map((path) => this.#resource(path));
     return { resultType: 'complete', resources: [...own, ...(this.#extras.resources ?? []).map(({ resource }) => resource)], ...UNCACHED };
   }
 
   #listTemplates(params: Record<string, unknown>): ListResourceTemplatesResult {
-    refuseCursor(params);
+    requireNoCursor(params);
     const own: ResourceTemplate[] = Object.entries(TYPES).map(([type, { singular }]) => ({
       uriTemplate: `${this.#root}/${type}/{+path}`,
       name: type,
@@ -240,7 +241,7 @@ function argumentsFor(definition: 'WriteNoteArguments' | 'DeleteNoteArguments', 
 }
 
 // A never pages, so no cursor it could be given is one it issued.
-function refuseCursor(params: Record<string, unknown>): void {
+function requireNoCursor(params: Record<string, unknown>): void {
   if (params.cursor !== undefined) throw new JsonRpcError(INVALID_PARAMS, 'Invalid cursor');
 }
 

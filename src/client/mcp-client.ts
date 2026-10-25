@@ -33,11 +33,11 @@ export interface McpClient {
   request<R extends Result = Result>(method: string, params?: Record<string, unknown>): Promise<R>;
 }
 
-const NAME_SOURCES: Readonly<Record<string, 'name' | 'uri'>> = {
-  'tools/call': 'name',
-  'resources/read': 'uri',
-  'prompts/get': 'name',
-};
+const NAME_SOURCES: ReadonlyMap<string, 'name' | 'uri'> = new Map([
+  ['tools/call', 'name'],
+  ['resources/read', 'uri'],
+  ['prompts/get', 'name'],
+]);
 
 export function createMcpClient({ endpoint, clientInfo, fetch: send = fetch }: McpClientOptions): McpClient {
   let nextId = 1;
@@ -55,7 +55,7 @@ export function createMcpClient({ endpoint, clientInfo, fetch: send = fetch }: M
         'MCP-Protocol-Version': PROTOCOL_VERSION,
         'Mcp-Method': method,
       };
-      const source = NAME_SOURCES[method];
+      const source = NAME_SOURCES.get(method);
       if (source && typeof params[source] === 'string') headers['Mcp-Name'] = headerValue(params[source] as string);
       const response = await send(endpoint, {
         method: 'POST',

@@ -16,11 +16,11 @@ import {
 } from './vendor/mcp-spec/2026-07-28/schema';
 
 /** The methods whose requests mirror a body value in `Mcp-Name`, and where it comes from. */
-const MCP_NAME_SOURCES: Readonly<Record<string, 'name' | 'uri'>> = {
-  'tools/call': 'name',
-  'resources/read': 'uri',
-  'prompts/get': 'name',
-};
+const MCP_NAME_SOURCES: ReadonlyMap<string, 'name' | 'uri'> = new Map([
+  ['tools/call', 'name'],
+  ['resources/read', 'uri'],
+  ['prompts/get', 'name'],
+]);
 
 const BASE64_SENTINEL = /^=\?base64\?(.*)\?=$/;
 
@@ -42,9 +42,9 @@ export async function serveMcp(request: Request, role: ServerRole): Promise<Resp
     // transport accepts any it is sent.
     if (classified.kind === 'notification') return new Response(null, { status: 202 });
     id = classified.message.id;
-    checkEnvelope(classified.message);
-    checkHeaders(request.headers, classified.message);
-    checkVersion(classified.message);
+    requireEnvelope(classified.message);
+    requireMatchingHeaders(request.headers, classified.message);
+    requireSupportedVersion(classified.message);
     const result = role.handle(classified.message);
     return Response.json({ jsonrpc: JSONRPC_VERSION, id, result });
   } catch (error) {
@@ -54,7 +54,7 @@ export async function serveMcp(request: Request, role: ServerRole): Promise<Resp
 }
 
 // Every request carries its protocol version in `_meta`.
-function checkEnvelope(message: JSONRPCRequest): void {
+function requireEnvelope(message: JSONRPCRequest): void {
   const version = message.params?._meta?.['io.modelcontextprotocol/protocolVersion'];
   if (typeof version !== 'string') {
     throw new JsonRpcError(INVALID_PARAMS, 'Missing _meta envelope: params._meta["io.modelcontextprotocol/protocolVersion"] is required');
@@ -63,7 +63,7 @@ function checkEnvelope(message: JSONRPCRequest): void {
 
 // A speaks one version. A header that disagrees with the body is a mismatch first, since the
 // two parties may each have read a different one.
-function checkVersion(message: JSONRPCRequest): void {
+function requireSupportedVersion(message: JSONRPCRequest): void {
   const version = message.params!._meta['io.modelcontextprotocol/protocolVersion'];
   if (version !== LATEST_PROTOCOL_VERSION) {
     throw new JsonRpcError(UNSUPPORTED_PROTOCOL_VERSION, `Unsupported protocol version: ${version}`, {
@@ -75,11 +75,11 @@ function checkVersion(message: JSONRPCRequest): void {
 
 // The headers mirror the body so intermediaries can route without parsing it, and a mismatch
 // means two parties disagree about the request, so any mismatch is refused.
-function checkHeaders(headers: Headers, message: JSONRPCRequest): void {
+function requireMatchingHeaders(headers: Headers, message: JSONRPCRequest): void {
   const version = message.params!._meta['io.modelcontextprotocol/protocolVersion'];
   requireHeader(headers, 'MCP-Protocol-Version', version);
   requireHeader(headers, 'Mcp-Method', message.method);
-  const source = MCP_NAME_SOURCES[message.method];
+  const source = MCP_NAME_SOURCES.get(message.method);
   // With no value in the body there is nothing to mirror, and the schema refuses the request.
   if (source && (message.params?.[source] !== undefined || headers.has('Mcp-Name'))) {
     requireHeader(headers, 'Mcp-Name', message.params?.[source], { base64: true });
