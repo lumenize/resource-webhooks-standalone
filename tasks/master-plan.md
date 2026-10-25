@@ -4,7 +4,7 @@
 
 ## Objective
 
-**Learn how best to build on MCP's core, its extensions API and SEP-3415, toward a specification in which an MCP client subscribes to some state (a resource), or a collection of them, with a webhook URL, and from then on the server POSTs to that webhook whenever one of them changes, carrying the resource's latest version, a patch to get to the latest version, or a notification that the resource has changed.**
+**Learn how best to build on MCP's core, its extensions API and SEP-3415, toward a specification in which an MCP client subscribes to some state (a resource), or a collection of them, with a webhook URL, and from then on the server POSTs to that webhook whenever one of them changes, carrying the resource's new contents, a patch to get to them, or a notification naming its new version.**
 
 "Best" in the sentence above is a weighted value judgement, trading off technical feasibility, implementation elegance, and political viability to a potential sponsor, the core committee, and the MCP community at large.
 
@@ -16,17 +16,17 @@
 
 - **This is one of three possible flavors that we've identified so far, and the drafts are compared before one is recommended.** This one, the standalone flavor, has methods of its own, `resources/webhooks/subscribe` beside SEP-3415's `events/subscribe`. One that extends Events would add a second extension on Events' own methods. One that amends Events would change SEP-3415's own text, writing a state contract into it. The predecessor, `../mcp-events-prototype`, designed a state contract over Events' own methods, and its task files are this repo's mining source.
 - **On SEP-3415's thread, on 2026-10-16, Larry argued that resources should stay inside Events.** Peter had written that morning that watching state and consuming messages "will need different handling and different APIs", that "we should likely share a bunch of the same machinery", and that the question "requires some thought and discussion". mib00038 proposed a contract declared per event type in `events/list`: `message`, where every occurrence matters, or `state`, where a server may send only the latest occurrence per key. Larry took that split up, wrote that if resources got a proposal of their own "we end up re-solving coalescing, resync, and deletion", and said his prototype would run `mcp.resource.updated` and `mcp.task.updated` as `state` types over Events' own methods, and report where the API had to diverge. Peter asked minutes later to move the discussion to the working group.
-- **This flavor tests Peter's side of that question, so it is built first.** It gives resources methods of their own, and takes SEP-3415's webhook rules by reference: different APIs on the same machinery. The flavor that extends Events is the one Larry described. Built second and compared with this one, it shows where an API on Events' own methods has to diverge, which is the report Larry offered, and what coalescing, catching up and deletion cost each flavor.
-- **Peter would rather extend `subscriptions/listen` than add a parallel `events/listen`.** On SEP-3415's thread, Felix Weinberger asked on 2026-10-22 whether Events could move its notifications to a method of its own, and Peter, posting as @poita, answered on 2026-10-23 that "introducing `events/listen` seems unnecessarily messy and inconsistent", asking instead that SEP-3371 let extensions add to `subscriptions/listen`. Our inference, not his statement: this extension's `resources/webhooks/subscribe` sits beside `events/subscribe` in the same way, so his preference counts for the flavor that extends Events when the drafts are compared.
-- **The working group is now Tasks and Events** (Peter, in Discord on 2026-10-21). The Agents working group becomes an interest group, its Tasks work folds in, and Luca Chang and Caitie McCaffrey join Clare Liguori and Peter as leads, "to allow us to figure how these things interact". Task state, the subject of Open Question 6, and resource state, this work's, now sit with one group.
-- **The working group's charter is the product lens.** Its mission is to "define how servers proactively notify clients of state changes", "with defined ordering guarantees that hold across all transports", which level 2's per-URI version order meets. Its scope takes in SEPs on "delivery semantics, and event ordering guarantees", and leaves out modifications to `notifications/resources/updated` "that do not relate to proactive server-initiated delivery". Level 1 leaves that notification untouched, and level 2 is proactive delivery throughout.
+- **This flavor tests Peter's side of that question, so it is built first.** It gives resources methods of their own, and takes SEP-3415's webhook rules by reference: different APIs on the same machinery. SEP-3415's own rationale calls Events "a separate primitive" from resource watching, and the two mechanisms "independent". The flavor that extends Events is the one Larry described. Built second and compared with this one, it shows where an API on Events' own methods has to diverge, which is the report Larry offered, and what coalescing, catching up and deletion cost each flavor.
+- **Peter would rather extend `subscriptions/listen` than add a parallel `events/listen`.** On SEP-3415's thread, Felix Weinberger asked on 2026-10-22 whether Events could move its notifications to a method of its own, and Peter, posting as @poita, answered on 2026-10-23 that "introducing `events/listen` seems unnecessarily messy and inconsistent", asking instead that SEP-3371 let extensions add to `subscriptions/listen`.
+- **The working group is now Tasks and Events,** renamed on 2026-10-16 by its charter's changelog and announced by Peter in Discord on 2026-10-21. The Agents working group becomes an interest group, its Tasks work folds in, and Luca Chang and Caitie McCaffrey join Clare Liguori and Peter as leads, "to allow us to figure how these things interact". Task state, the subject of Open Question 6, and resource state, this work's, now sit with one group.
+- **The working group's charter is the product lens.** Its mission is to "define how servers proactively notify clients of state changes", "with defined ordering guarantees that hold across all transports", which level 2's per-URI version order meets. Its scope takes in SEPs on "delivery semantics, and event ordering guarantees", and leaves out modifications to `notifications/resources/updated` "that do not relate to proactive server-initiated delivery". Level 1 leaves that notification untouched, and level 2 is proactive delivery throughout. Its success criteria ask for "an accepted SEP defining the trigger/callback mechanism and its subscription lifecycle". `resources/webhooks/subscribe` is a second subscription lifecycle beside `events/subscribe`, a cost the comparison between flavors weighs.
 - **SEP-3415 takes nothing new while its vote is pending.** Peter, in Discord on 2026-10-20: it is already judged big. The core maintainers may ask for changes after their review, which could give us another chance to comment on SEP-3415 itself.
 - **Meanwhile, we start engaging the working group with a PR of a document, not code,** to `modelcontextprotocol/experimental-ext-triggers-events`, opened once this prototype has taught us enough, so the group can comment on what we learned. A SEP follows it.
 - **An Extensions Track SEP needs a reference implementation in an official SDK before review** (SEP-2133). This prototype is independent of the SDK, so that implementation comes later, probably built on Peter's TypeScript Events work.
 
 ### Technical
 
-- **SEP-3415's Open Question 2 is the floor for resources: the least a resource subscription over Events can be.** It asks whether resource subscriptions should be re-expressed as events, with "a reserved `mcp.resource.updated` event type whose arguments are `{uri}`", so that today's notification gains "cursors, poll and webhook delivery, and replay for free", and so that folding it in "would remove a parallel mechanism from the specification". Nothing in the sketch carries a value or a version: it is today's notification on Events' delivery. SEP-3415's § *Relationship to existing primitives* already allows it: "Servers MAY implement resource watching through events". Level 2's `notify` form carries the same news plus the version.
+- **SEP-3415's Open Question 2 is the floor for resources: the least a resource subscription over Events can be.** It asks whether resource subscriptions should be re-expressed as events, with "a reserved `mcp.resource.updated` event type whose arguments are `{uri}`", so that today's notification gains "cursors, poll and webhook delivery, and replay for free", and so that folding it in "would remove a parallel mechanism from the specification". Nothing in the sketch carries a value or a version: it is today's notification on Events' delivery. SEP-3415's rationale, in § *Relationship to existing primitives*, already allows it: "Servers MAY implement resource watching through events". Level 2's `notify` form carries the same news plus the version.
 - **SEP-3415's rationale argues against extending resource subscriptions instead of adding `events/*`.** Resources "have no parameters or cursors", it says, and adding "filter arguments, replay and three delivery modes" to them "would distort that model". For a single resource, level 2 keeps to that model: the target is a URI and nothing else, there is no replay and no cursor, and the webhook is the only delivery. The collection targets, `uriTemplate` and `listed`, and a collection's change cursor come closest to what the rationale rejects, so that cursor appears only in a collection's refresh results, as § *Collections* shows.
 - **Open Question 6 and Peter's comment open the way to more.** Open Question 6 sketches `mcp.task.updated` with the payload `{status, progress?, result?}`, which shows that an Events payload may carry state, result included. Peter's comment of 2026-10-16 ties the two cases together, "observing task state vs stream of messages", as needing different handling. Level 2 takes up that point, with deliveries that carry the value or a patch. We prove it on resources first, because a resource already has a URI and contents, where tasks bring in the Tasks extension. Luca Chang's Task Event Sources draft, `experimental-ext-triggers-events` #2, already ties a task to an Events stream that carries its intermediate results, and Luca is now one of the working group's leads.
 - **Today a resource watcher needs an open stream.** `notifications/resources/updated` arrives only on a `subscriptions/listen` stream, since SEP-2575 replaced `resources/subscribe` with that stream's `resourceSubscriptions` filter. A change made while the stream is down is lost without a trace. Revisions 2025-03-26 to 2025-11-25 let a client resume an SSE stream with `Last-Event-ID`, but 2026-07-28 dropped that, and its server keeps no subscription state across reconnections. The notification also names only the URI, so acting on it takes another round trip via `resources/read`.
@@ -39,15 +39,15 @@
   - triggers-events #10, a field report on evdock, describes a receiver for clients off the public internet: a relay on a Worker with a SQLite Durable Object that stores deliveries while its client is away, and never holds signing secrets. B, this design's gateway, makes the opposite choices: it holds its client's secret, stores nothing, and answers `503` while the client is away.
   - The Transports working group's drafts `transports-wg` #63 and #64 cover the authorization lifetime and lifecycle notifications of `subscriptions/listen` streams, missed notifications included, and #57, Definition Tags, gives results a `digest`.
 
-The sections that follow say what makes this worth building, then show the first level end to end: MCP core as it is, plain HTTP, and `mcp.resource.updated` over Events. The second level comes after it, on the same cast, followed by collections, who may subscribe, and resources outside `https`. The subscriber is a client behind a gateway, the deployment most MCP clients need, since few can receive a webhook.
+The sections that follow say what makes this worth building, then show the first level end to end: MCP core as it is, plain HTTP, and `mcp.resource.updated` over Events. The second level comes after it, on the same cast, followed by collections, who may subscribe, the `patch` form, resources outside `https`, the wire types, what the extension takes from SEP-3415, and what building it should teach us. The subscriber is a client behind a gateway, the deployment most MCP clients need, since few can receive a webhook.
 
 ## Goals
 
-1. **Show resource notifications working on top of SEP-3415's Events, cleanly, as its Open Question 2 sketches them.** This is not an important goal on its own. It comes first because it is the floor for Open Question 2.
-2. **The most important goal is to learn whether resource sync can be built elegantly without conflicting with Events.** Narrowing, elaborating, and extending Events in the ways it is meant to be extended are all expected. The aim is to break no requirement of Events, and where that proves impossible, or merely inelegant, to record it loudly in `sep-notes.md` § *Departures from SEP-3415*.
-3. **Both levels follow SEP-3371's extension rules,** so an SDK that implements its extension points could host them as they are. SEP-3371's § *Extension rules* is about the wire, so this prototype checks it without an SDK: notifications use methods of the extension's own and add nothing to a core stream such as `subscriptions/listen`, any error code an extension allocates sits outside JSON-RPC's reserved range, and extra metadata on a core type goes in `_meta`. This extension allocates no codes. It uses `-32602` and SEP-3415's general-purpose codes, which sit inside that range, and SEP-3415's Open Question 7 asks whether they should be allocated at all.
+1. **Show resource notifications working on top of SEP-3415's Events, cleanly, with the event type its Open Question 2 sketches.** This is not an important goal on its own. It comes first because it is what a sponsor can accept without argument, and the baseline level 2 is measured against.
+2. **The most important goal is to learn whether resource state sync can be built elegantly without conflicting with Events.** Narrowing, elaborating, and extending Events in the ways it is meant to be extended are all expected. The aim is to break no requirement of Events, and where that proves impossible, or merely inelegant, to record it loudly in `sep-notes.md` § *Departures from SEP-3415*.
+3. **Both levels follow SEP-3371's extension rules,** so an SDK that implements its extension points could host them as they are. SEP-3371's § *Extension rules* is about the wire, so this prototype checks it without an SDK: notifications use methods of the extension's own and add nothing to a core stream such as `subscriptions/listen`, any error code an extension allocates sits outside JSON-RPC's reserved range, and extra metadata on a core type goes in `_meta`. This extension allocates no codes (R29). A declares Events with an empty settings object, so level 1 sends nothing on `subscriptions/listen`, though SEP-3415 itself reserves a filter field there, `eventsListChanged`, which SEP-3371's rules leave out.
 4. **A watcher hears about a change without holding a connection open.** Today it learns of one only while its `subscriptions/listen` stream is up.
-5. **A missed delivery costs nothing once the next one arrives, and at most one refresh interval if none does,** an hour in the examples. Today a watcher that misses a notification cannot tell, and has nothing to catch up from.
+5. **A missed delivery costs nothing once the next delivery for that resource arrives, in the `notify` and `full` forms, and at most one refresh interval otherwise,** an hour in the examples. Today a watcher that misses a notification cannot tell, and has nothing to catch up from.
 6. **A delivery can carry the change itself.** Today a change takes two calls: the notification, which carries only the URI, and a `resources/read`.
 7. **Webhooks work exactly as SEP-3415 defines them.** MCP keeps one webhook mechanism, an off-the-shelf Standard Webhooks verifier checks every delivery, and an SDK reuses its Events webhook code.
 8. **It stays small.** The measure is how many requirements in `sep-notes.md` are this extension's own rather than references to SEP-3415.
@@ -55,7 +55,16 @@ The sections that follow say what makes this worth building, then show the first
 ## Relationships
 
 - **Gated by nothing outside this repo.** The prototype and its notes can proceed now.
-- **Before the PR, the prototype builds every phase, in this order:** level 1; level 2 for one `https` resource; collections; the `patch` form; resources without an `https` URI. That keeps the Objective's promise to take on what an implementation teaches rather than defer it.
+- **Before the PR, the prototype builds every phase, in this order:**
+  1. **Level 1,** with the page's back channel from A and B, so every later module reports through it and the tests watch through it.
+  2. **Level 2 for one `https` resource.**
+  3. **Collections.**
+  4. **The demo page,** served from the Worker's own origin, with `b` running in the browser, a control that puts `b` to sleep and wakes it, and the controls § *The cast* names. Beats 1 to 13 need only the three phases before it.
+  5. **The `patch` form.**
+  6. **Resources without an `https` URI.**
+  7. **The document the PR carries,** last.
+
+  That keeps the Objective's promise to take on what an implementation teaches rather than defer it.
 - **Pass 2 waits on the mining pass,** which settles from the predecessor the test oracle (the conformance framework), the validator (`@cfworker/json-schema`, on JSON Schema generated from the spec's TypeScript), the JSON-RPC core (`json-rpc-mixin`), the transport headers (`Mcp-Method` and `Mcp-Name`) and the `patch` rules.
 - **Gates the PR** to `modelcontextprotocol/experimental-ext-triggers-events`, from the fork in `../experimental-ext-triggers-events` on its `resource-webhooks` branch.
 - **Gates the official-SDK reference implementation,** in `../mcp-typescript-sdk`.
@@ -78,10 +87,10 @@ The predecessor, `../mcp-events-prototype`, never got as far as code, only desig
 
 ### Two levels on one cast
 
-- **Level 1, the floor, is `mcp.resource.updated` over Events, as Open Question 2 sketches it.** It uses SEP-3415's own methods and an event type of that name, and adds nothing to either, so it needs nothing from `sep-notes.md`. It takes the name Open Question 2 sketches, though SEP-3415 has yet to decide whether to reserve `mcp.*` names at all.
+- **Level 1, the floor, is `mcp.resource.updated` over Events, as Open Question 2 sketches it.** It uses SEP-3415's own methods and an event type of that name, and adds nothing to either, so it adds no requirement to `sep-notes.md`. It shares A's webhook code with level 2, and with it N2 and N3, both within SEP-3415's room. A declares `io.modelcontextprotocol/events` with an empty settings object, since it sends no list-change notifications. It takes the name Open Question 2 sketches, though SEP-3415 has yet to decide whether to reserve `mcp.*` names at all.
 - **Level 2 is resource state sync, in this extension's own methods.** It keeps the cast, the gateway and SEP-3415's webhook rules, and changes what a delivery carries and how a subscriber catches up. Every requirement in `sep-notes.md` is for this level.
 - **The demo runs them in that order,** so the second is always seen against the first. Between them, the page's Wipe button, which § *The cast* defines, empties all four parties, so level 2 starts from a clean slate, with nothing carried over from level 1 (Larry, 2026-10-23).
-- **A's webhook code is built once, at level 1, and shared.** Level 2 composes it with a coalescing queue per URI and its own body. The prototype builds SEP-3415's MUSTs and whatever the demo shows. Suspension and dual-signing during a secret's rotation wait until something needs them.
+- **A's webhook code is built once, at level 1, and shared.** Level 2 composes it with a coalescing queue per subscription and URI, and its own body. The prototype builds SEP-3415's MUSTs and whatever the demo shows. Suspension, dual-signing during a secret's rotation, and `deliveryStatus`, which SEP-3415 lets a server omit, wait until something needs them.
 
 ### The cast
 
@@ -108,28 +117,41 @@ block-beta
   - **From A across to B by webhook:** an Events occurrence at level 1, and at level 2 a change in one of three forms. `notify` names the new version, `full` adds the contents, and `patch` carries a merge patch from the previous version.
   - **From B down to `b` by a channel neither SEP specifies:** a WebSocket here, though stdio, a CLI or anything else would do.
 - **`b` subscribes with A directly, which is SEP-3415's forward-proxy deployment.** `b` calls A, naming B's webhook URL as the place to deliver, since in SEP-3415 "the callback URL does not need to be the client itself". This example hosts B in the same Worker project as A, which a real forward-proxy deployment would not.
-- **The Worker** at `https://resource-webhooks-standalone.transformation.workers.dev` hosts both A and B, and `...` stands for it in the examples. Each later flavor of this SEP, if we build them, gets a Worker project of its own, named after its repo, so each deploys alone. The name waits on the first deploy. Its `compatibility_flags` include `global_fetch_strictly_public`, so A's webhook POST to B, on the Worker's own host, goes out and comes back through Cloudflare's front door, as a POST to any receiver would. Without the flag, Cloudflare refuses that fetch with error 1042.
+- **The Worker** at `https://resource-webhooks-standalone.transformation.workers.dev`, a provisional name until the first deploy, hosts both A and B, and `...` stands for it in the examples. Each later flavor of this SEP, if we build them, gets a Worker project of its own, named after its repo, so each deploys alone. Its `compatibility_flags` include `global_fetch_strictly_public`, so A's webhook POST to B, on the Worker's own host, goes out and comes back through Cloudflare's front door, as a POST to any receiver would. Without the flag, Cloudflare refuses that fetch with error 1042.
 - **A and B are Durable Object classes of their own, `Server` and `Gateway`.** Each composes a module that holds its role, so the Lumenize port can compose the same modules into a Lumenize node, as Lumenize composes its `ClientGateway` into the scoped node that hosts it.
-- **The Worker routes with a copy of `routeDORequest`, in `src/vendor/lumenize-routing/`.** It is copied from `@lumenize/routing`, six files and about 790 lines, with its `@lumenize/debug` logging removed, relicensed under Apache-2.0 and listed in `ATTRIBUTIONS.md`. The Worker imports it by relative path, so its `fetch` handler reads as the Lumenize port's would, and passes it four options:
+- **The Worker routes with a copy of `routeDORequest`, in `src/vendor/lumenize-routing/`.** It is copied from `@lumenize/routing`, six files and about 790 lines, with its `@lumenize/debug` logging removed, relicensed under Apache-2.0 and listed in `ATTRIBUTIONS.md`. The Worker imports it by relative path, so its `fetch` handler reads as the Lumenize port's would, and passes it four options, which the route table below applies:
   - **`bindings`,** so a path such as `/server/A/...` or `/gateway/B/...` can reach only a `Server` or a `Gateway`.
-  - **`cors`, naming the Worker's own origin.** A request whose `Origin` is present and not that origin is refused with `403` before any object wakes, as MCP's Streamable HTTP transport requires: servers "MUST validate the `Origin` header on all incoming connections to prevent DNS rebinding attacks". A request with no `Origin`, such as A's webhook POST to B, passes. The check covers B's socket too, since `routeDORequest` runs it before either hook.
+  - **`cors`, naming the Worker's own origin.** A request whose `Origin` is present and not that origin is refused with `403` before any object wakes, as MCP's Streamable HTTP transport requires: servers "MUST validate the `Origin` header on all incoming connections to prevent DNS rebinding attacks". A request with no `Origin`, such as A's webhook POST to B, passes. The check covers B's socket too, since `routeDORequest` runs it before either hook. `applyCorsPolicy` answers a preflight `OPTIONS` from another origin with `204` and no CORS headers, so the Worker turns that into `403` on A's MCP endpoint, as the transport requires, and the copy's attribution notes the change.
   - **`onBeforeRequest`, checking A's tokens at the edge,** as § *Who may subscribe* says.
   - **`onBeforeConnect`, checking `b`'s token for B's socket,** as § *The leg between the gateway and its client* says.
-  - **The authorization server's routes and metadata,** at the origin's root, are the requests it does not match. The Worker hands them to A by hand, after the same `Origin` check, `applyCorsPolicy`, which the copy exports.
-- **A holds notes and lists.** Each one matches the template `.../server/A/{type}/{folder}/{id}`, with the types `notes` and `lists`, and is an `https` resource, such as `.../server/A/notes/inbox/note-42`, which a client can read with `resources/read` or a plain `GET`, and which carries an `ETag` per version. Notes change through A's tools, `write_note` and `delete_note`, or by `PUT` and `DELETE` on their URLs. A also runs the authorization server that `b` gets its token from.
+- **One table holds every route.** `onBeforeRequest` and `onBeforeConnect` see every request and every upgrade, so each decides by the path, as the last column says. The authorization server's routes are the ones `routeDORequest` does not match, and the Worker hands them to A by hand, after the same `Origin` check, `applyCorsPolicy`, which the copy exports.
+
+| Path | Request | Handled by | Needs |
+|---|---|---|---|
+| `/` and the page's assets | `GET` | the Worker's static assets | nothing |
+| `/server/A/mcp` | `POST` | A | a token for A |
+| `/server/A/notes/...` | `GET` | A | nothing |
+| `/server/A/notes/...` | `PUT`, `DELETE` | A | a token for A |
+| `/server/A/page` | WebSocket | A, the page's back channel | nothing |
+| `/gateway/B/hooks/{client}` | `POST`, from A | B | a valid signature, which B checks |
+| `/gateway/B/ws/{client}` | WebSocket | B | a token for B's socket, issued to that client |
+| `/gateway/B/page` | WebSocket | B, the page's back channel | nothing |
+| `/register`, `/authorize`, `/token`, `/.well-known/...` | as OAuth defines them | A, by hand | nothing |
+
+- **A holds notes and lists.** Each one matches the template `.../server/A/{type}/{folder}/{id}`, with the types `notes` and `lists`, and is an `https` resource, such as `.../server/A/notes/inbox/note-42`, which a client can read with `resources/read` or a plain `GET`, and which carries an `ETag` per version. Notes change through A's tools, `write_note` and `delete_note`, or by `PUT` and `DELETE` on their URLs. A also runs the authorization server that `b` gets its tokens from, in a module of its own beside A's server module, so A's role module sees only verified claims.
   - **A serves its folders and types as collections.** A `resources/read` of `.../server/A/notes/inbox` or `.../server/A/notes` returns one entry in `contents` per note under it, and `resources/templates/list` lists `.../server/A/{type}`, `.../server/A/{type}/{folder}` and `.../server/A/{type}/{folder}/{id}`.
-  - **`resources/list` returns the inbox's notes only,** so an archived note is reachable through a template and not through the list.
+  - **`resources/list` returns the inbox's notes and every list,** so a `listed` target covers more than the inbox does, and an archived note is reachable only through a template.
   - **A keeps each resource's earlier versions, not only its latest,** as Lumenize's temporal model keeps them (Larry, 2026-10-25). A change adds a version, and a deletion adds one marked deleted. The `patch` form patches from them, and a collection's catch-up reads its members' newest versions from them. A forgets earlier versions and deletions once they are older than its cut-off window, a setting of A's, a day by default, which the page can shorten to show a reset.
   - **A list is the second type,** `{ "title": "Groceries", "items": ["oat milk"] }`, so that a template can match across types.
 - **B is a gateway, and stores nothing.** It receives webhooks for each of its clients at a URL of that client's own, `/gateway/B/hooks/{client}`, the path shape SEP-3415's own examples use, and passes each one down that client's WebSocket. Each socket carries its client's secret in its attachment, so B writes nothing, as Lumenize's Gateway writes nothing. B never calls A, and holds no principal there.
-  - **SEP-3415 calls the receiving party a forward proxy in some places and a gateway in others.** § *Webhook-Based Delivery* and Appendix B say forward proxy, and Appendix A and the delivery profile say gateway. This design says gateway. Unlike the proxy of § *Webhook-Based Delivery*, which serves events to its clients by poll or push and so buffers them, B passes each delivery straight down its client's socket and keeps none. Lumenize's Gateway also carries a client's calls up to the nodes, and this one carries only deliveries down, since `b` calls A itself.
+  - **SEP-3415 uses both words, gateway and forward proxy, sometimes in one paragraph,** as Appendix A's webhook mode does. This design says gateway. Unlike the proxy of § *Webhook-Based Delivery*, which serves events to its clients by poll or push and so buffers them, B passes each delivery straight down its client's socket and keeps none. Lumenize's Gateway also carries a client's calls up to the nodes, and this one carries only deliveries down, since `b` calls A itself.
   - **Nothing in B knows about notes,** and the same gateway serves both levels, since an Events occurrence and a level-2 change arrive with the same headers, signatures and verification.
 - **`b` is an MCP client of A that cannot receive a webhook,** as Claude Code on a laptop or a browser tab cannot. It holds the token, subscribes, refreshes, and keeps a copy of each resource it watches, at A's version. It can be a script in the early phases, but for the demo it runs in the browser, so its own messages are recorded where the demo shows them.
 - **The demo shows every message, and what each party holds.** `a` and `b` run in the browser, so their records are local to the page. A and B run on Cloudflare, so they report their contents and the messages they send and receive to the page via a WebSocket back channel.
 - **The page has two controls of its own, outside both SEPs,** sent to A and B over the same back channel:
   - **The Wipe button empties all four parties between the levels.** A loses its notes, subscriptions, verification cache, pending retries and OAuth client registrations, and starts a new epoch, so it refuses every token issued before. B closes its sockets. `a` and `b` register with A again, and `b` drops its copies, reconnects to B and registers a new secret. The page clears the messages it shows.
   - **A's retry schedule,** shown on screen: SEP-3415's bounds by default, and in the demo three attempts at 2, 4 and 8 seconds, so the audience sees a retry, and a newer version replacing a pending one, as they happen.
-- **Versions behave as HTTP's `ETag`s do.** Clients compare them only for equality. A's versions need not sort in time, though they may, and a server that knows its own versions sort MAY rely on that inside its implementation. In the examples they are short strings, `v1` and `v2`, and each level's examples count from `v1`. A's versions never repeat across a Wipe, since it mints them under the Wipe's epoch, as `e2.v1`, and the page shows the short form.
+- **Versions behave as HTTP's `ETag`s do.** A version is the resource's strong `ETag`, written without its quotes: `v2` on this extension's wire, `"v2"` in an HTTP header. Clients compare versions only for equality. A's versions need not sort in time, though they may, and a server that knows its own versions sort MAY rely on that inside its implementation. In the examples they are short strings, `v1` and `v2`, and each level's examples count from `v1`. A's versions never repeat across a Wipe, since A mints them under its epoch, a count of Wipes, as `e2.v1`, and the page shows the short form.
 
 ```ts
 interface Note { title: string; done?: boolean; due?: string; }
@@ -166,8 +188,8 @@ Several values in SEP-3415 and this design look alike: opaque strings a client i
 | `eventId`, as `evt_0042` | An identity: one upstream event, the same on every subscription it matches. | The client drops a second copy that arrives on the same subscription. | Level 1's occurrences. |
 | `webhook-id`, as `msg_2Lq8…` | An identity: one delivered message, the same on every retry of it. | The receiver drops a retry it already accepted. | Both levels (R14). |
 | The subscription `id`, as `sub_a3f1…` | An identity: one subscription, derived from its key. | The receiver reads it from `X-MCP-Subscription-Id` to pick the secret that verifies a delivery. | Both levels (R25). |
-| `version`, as `v2` | An identity: one state of one resource. It is the resource's strong `ETag`, written without its quotes. | In HTTP, a client sends it in `If-None-Match` on a `GET`, answered `304 Not Modified` while it is current, and in `If-Match` on a `PUT`, refused with `412 Precondition Failed` if someone else wrote first. Here, a client names the version it holds on a refresh, and ignores a delivery of one it holds. | Level 2, and the `ETag` of Scenario 1b. |
-| A change cursor | A position in the order of one collection's changes. | The client sends the one from its last refresh, and gets the members changed since. | A collection's refresh, in § *Collections*. |
+| `version`, as `v2` | An identity: one state of one resource, its `ETag` (§ *The cast*). | In HTTP, a client sends it in `If-None-Match` on a `GET`, answered `304 Not Modified` while it is current, and in `If-Match` on a `PUT`, refused with `412 Precondition Failed` if someone else wrote first. Here, a client names the version it holds on a refresh, and ignores a delivery of one it holds. | Level 2, and the `ETag` of Scenario 1b. |
+| A change cursor, as `c1` | A position in the order of one collection's changes. | The client sends the one from its last refresh, and gets the members changed since. | A collection's refresh, in § *Collections*. |
 
 - **The watermark lags because webhook deliveries overlap.** A posts each event as it happens and retries each on its own, so deliveries can land out of order. Say events 41, 42 and 43 go out, and 42's first attempt fails while 41 and 43 succeed. If 43's delivery carried `cursor_0043`, a client that kept it and later replayed from it would never get 42. So it carries `cursor_0041`, and only a delivery or refresh after 42 is accepted, or abandoned, carries `cursor_0043`. Poll and push hand out events in order, so there the cursor after an event is that event's own position.
 - **Each subscription has its own watermark,** because each has its own deliveries in flight. If a second subscriber's receiver took 42 the first time, its delivery of 43 already carries `cursor_0043`. SEP-3415 has the server hold, per subscription, the position and acceptance of each event in flight. That state is in memory, and after a restart the client's refresh, naming the cursor it kept, rebuilds it.
@@ -216,7 +238,7 @@ GET /server/A/notes/inbox/note-42      → 200, ETag: "v2"
 If-None-Match: "v1"                      {"title":"Buy milk","due":"2026-10-24"}
 ```
 
-- **A version is the resource's strong `ETag`,** written without its quotes: `v2` on the wire of this extension, `"v2"` in an HTTP header.
+- **Here the version travels as HTTP writes an `ETag`,** quoted, as `"v2"`, where this extension's own wire writes `v2`.
 - **Polling is solved for `https` resources,** which is why this extension leaves polling out, for now. Without some way to push, it either polls often or learns late.
 
 #### Scenario 2: `mcp.resource.updated` over Events
@@ -275,22 +297,22 @@ Level 2 removes those last two costs.
 
 A resource is state, and a watcher wants to hold its newest version, not to witness every change. This is perhaps the biggest mental model difference from the Events SEP. Three edits while a receiver is down leave it needing only the third. These things follow:
 
-- **The server may coalesce.** A delivery still pending when a newer version lands is replaced by it, and a lost delivery is repaired by the next one.
+- **The server may coalesce.** A delivery still pending when a newer version lands is replaced by it, and a lost delivery is repaired by the next one for the same URI.
 - **The design keeps no log of events** (Larry, 2026-10-25). A client needs a resource's newest version, not the steps that led to it, so every catch-up is answered from the resources' own versions, and none replays changes in order. A keeps each resource's earlier versions for the `patch` form, but those are its values, not a record of events.
 - **One resource needs only versions,** never a cursor, since a version already says which state a client holds (§ *Cursors, versions and IDs*). A collection's catch-up adds a change cursor, as § *Collections* shows.
-- **The server never stores a delivery position per subscription.** It does not record which version each subscriber last acknowledged (Larry, 2026-10-21). On a Durable Object, writes are the most expensive operation: with 1000 subscriptions, recording acknowledgements would turn one write per change into 1000. A subscription's record is written when it is created and when it is refreshed. Other services that sync state over webhooks work the same way: Dropbox, Google Drive and Calendar, Gmail and Microsoft Graph keep no delivery position per subscriber, call their pushes lossy, and leave catching up to the client.
+- **The server never stores a delivery position per subscription** (Larry, 2026-10-21). A subscription's record is written when it is created and when it is refreshed, and § *Decisions* gives the reasons.
 - **Retry queue status per subscription is kept in memory, not storage.**
   - **What it holds:** for each subscription and URI, the pending version and its attempts so far. Coalescing keeps that to one entry.
   - **How long it runs:** a few attempts with backoff over no more than 10 to 15 minutes, as SEP-3415 bounds them, which puts it with Slack's and Dropbox's short retries. Timers keep a Durable Object alive that long at compatibility dates from 2026-10-01, as Lumenize measured, so retries need no alarm and no write.
   - **What repairs a drop:** a delivery whose retries run out, or that an eviction or restart drops, is repaired at the subscriber's next refresh. A webhook POST wakes a hibernating gateway, so B rarely misses one. A client behind a gateway misses more when it sleeps, and catches up by refreshing when it reconnects.
   - **The schedule is a setting of A's,** which the page sets for the demo, as § *The cast* says.
-- **A refresh is the catch-up.** A refresh is the subscribe call made again with the same target and webhook URL. SEP-3415 asks for one before a grant runs out, and a subscriber may make one whenever it may have missed something. It is neither a push nor a read. Its result names the resource's current version, and in the `full` form carries the contents when the subscriber's version is behind, so one call repairs any number of misses. Scenario 5 shows a routine one.
+- **A refresh is the catch-up:** the subscriber's own call repairs any number of misses, as Scenarios 5 and 7 show.
 
 #### Scenario 3: a first subscription, from nothing
 
 *In sep-notes.md: R5, R8, R22 and R24.*
 
-At 15:00, after the Wipe, `a` writes note-42 again, as `v1`. The examples' versions restart at `v1`, while A's real ones carry the Wipe's epoch and never repeat. `b` connects to B at `wss://.../gateway/B/ws/b`, registers a secret, and subscribes in the `full` form, holding nothing:
+At 15:00, after the Wipe, `a` writes note-42 again, as `v1`. `b` connects to B at `wss://.../gateway/B/ws/b`, registers a secret, and subscribes in the `full` form, holding nothing:
 
 ```jsonc
 // b → B, first, over b's WebSocket: this prototype's own message
@@ -365,7 +387,7 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
   "version": "v2" }                          // equal to b's: no contents, no news
 ```
 
-- **A refresh is neither a push nor a read.** It is the subscriber's own call, it extends the subscription, and its result says what is current, with the contents only when the subscriber's version is behind. Scenario 7 shows that case.
+- **A refresh is neither a push nor a read.** It is the subscriber's own call, it extends the subscription, and its result says what is current, with the contents only when the subscriber's version differs. Scenario 7 shows that case.
 - **A subscriber may refresh whenever it suspects it missed something,** not only when a grant is running out. `b` refreshes every subscription when it reconnects to B.
 
 #### Scenario 6: changes it never sees
@@ -390,7 +412,7 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
 ```
 
 - **`v3` never reaches `b`, and nothing is lost,** because `v4` is everything `b` needs.
-- **In the demo, the retries come seconds apart,** not minutes, as § *Only the newest version matters* says, so the audience watches `v4` replace `v3`.
+- **In the demo, the retries come seconds apart,** as § *The cast* sets them, so the audience watches `v4` replace `v3`.
 - **Contents travel only when a subscriber asks for them.** SEP-3415's § *Payload minimality* says a server SHOULD keep payloads minimal, and `notify`, the default form, is. `b` asked for `full`, which a server need not offer (N6).
 - **A keeps at most one delivery in flight per subscription and URI,** and retries only the newest version. Deliveries for a URI therefore arrive in version order, and a stale one can never overtake a newer one.
 - **`contents` has the shape of `resources/read`'s result,** so the code that applies a read applies a delivery.
@@ -408,30 +430,26 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
 // A → b
 { "resultType": "complete", "id": "sub_a3f1c8e2b0d49f7e",
   "refreshBefore": "2026-10-21T17:05:00Z",
-  "version": "v5",                          // differs from b's v4: b is behind
-  "contents": [ { "...": "the note at v5" } ],
-  "deliveryStatus": { "active": true,       // retries ran out; not suspended
-                      "lastError": "http_5xx",
-                      "lastDeliveryAt": "2026-10-21T15:34:00Z" } }
+  "version": "v5",                          // differs from b's v4
+  "contents": [ { "...": "the note at v5" } ] }
 ```
 
-- **A refresh is the catch-up,** and it goes straight from A to `b`, not through B. However much `b` missed, this one call brings it to the current version, where level 1 had nothing to replay.
-- **`deliveryStatus` is SEP-3415's.** Here it reports the failed attempts at `v5`, with delivery still active, since retries running out is not a suspension.
+- **The refresh goes straight from A to `b`, not through B.**
 
 #### What a receiver's answer means
 
-What each answer means is SEP-3415's. This extension adds two things: a body too large for the `full` form goes in the `notify` form, and a newer version replaces a pending one.
+What each answer means is SEP-3415's. This extension adds two things: a body too large for the `full` form goes in the `notify` form (R27), and a newer version replaces a pending one (R12).
 
 | B answers | What A does |
 |---|---|
 | any `2xx` | The version is accepted. A drops it from its pending entry. |
-| `410 Gone` | A stops retrying that version. The subscription is unaffected, so a later version is delivered as usual. |
+| `410 Gone` | A stops retrying that version. The subscription is unaffected, so a later version is delivered as usual (R28). |
 | `413 Payload Too Large` | A stops retrying that version. In the `full` form, A sends a body that large in the `notify` form instead, so this answer should never come. |
 | any other status, such as `503` while `b` is away, or no answer within about 5 seconds | A retries with backoff, and a newer version that lands meanwhile replaces the pending one. |
 
 #### Scenario 8: a deletion
 
-*In sep-notes.md: R11.*
+*In sep-notes.md: R11 and R16.*
 
 `a` deletes note-42, through `delete_note`. A delivers, and B passes on:
 
@@ -461,7 +479,7 @@ So a subscription names one of three targets:
 
 ##### Scenario 9: a folder
 
-*In sep-notes.md: R18 and R32.*
+*In sep-notes.md: R18 to R20, and R32.*
 
 At 16:10, `b` subscribes to A's inbox in the `notify` form, holding none of it yet:
 
@@ -482,7 +500,7 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
 ```
 
 - **A new member is a change from nothing,** and a removed one is a deletion, so a collection subscription needs no list-changed signal of its own.
-- **The other two targets deliver the same way.** A `uriTemplate` target, such as `.../server/A/{type}/archive`, covers every type's archive. A `listed` target covers the inbox's notes, which are all that `resources/list` returns here. Each delivery names the member's own `uri`.
+- **The other two targets deliver the same way.** A `uriTemplate` target, such as `.../server/A/{type}/archive`, covers every type's archive. A `listed` target covers the inbox's notes and every list, which is what `resources/list` returns here. It is level 2's counterpart of Open Question 2's `mcp.resources.list_changed`. Each delivery names the member's own `uri`.
 - **A subscription from nothing names no cursor,** and its result lists every member that exists, at its newest version.
 
 ##### Scenario 10: catching up a folder
@@ -506,7 +524,7 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
   "cursor": "c6" }
 ```
 
-- **Each member comes back once, at its newest version.** note-43 changed three times and was then deleted, and `b` gets only the deletion. A answers from each member's newest version, so nothing replays the steps between, as § *Only the newest version matters* says.
+- **Each member comes back once, at its newest version.** note-43 was created, edited twice and deleted after `c1`, and `b` gets only the deletion. A answers from each member's newest version, so nothing replays the steps between, as § *Only the newest version matters* says.
 - **Deliveries carry no cursor,** so note-43's delivery at 16:15 left `b`'s cursor at `c1`. A cursor in a delivery would have to be a watermark, since deliveries overlap. A refresh can therefore return a member `b` already holds, and `b` skips it by its version.
 - **`c1` and `c6` are opaque.** A server that stamps its versions from one counter MAY use the version as the cursor, as Kubernetes stamps an object's and a list's `resourceVersion` from etcd's one revision. `b` never compares either (R36).
 - **A cursor A can no longer serve gets every member, with `reset: true`.** A forgets deletions older than its cut-off window, so for an older cursor it cannot say what was deleted. It lists every member that exists instead, and `b` drops any it holds that the reset does not list. A never answers a stale cursor with `410`, which SEP-3415 gives a receiver's answer.
@@ -523,6 +541,14 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
   - **Checking it.** The token is signed with a key the Worker holds as a secret, names A's MCP endpoint as its audience, and carries the epoch it was issued in. `onBeforeRequest` checks its signature, expiry and audience at the edge, so a bad token never wakes A, and A refuses a token from an earlier epoch. Neither check writes to storage.
 - **Endpoint verification is cached per `(principal, delivery.url, delivery.secret)`.** SEP-3415 caches it per `(principal, url)`. A principal that once verified a webhook URL could then subscribe it again with a secret the receiver never held, skip the handshake, and flood it with deliveries it can only reject. Keyed by the secret, a new secret faces a new handshake, which the receiver fails unless it holds that secret. Rotating a secret costs one handshake, and subscribing the same webhook URL to many targets with one secret costs none.
 
+#### The `patch` form, in a later phase
+
+For a resource whose contents are JSON, a delivery can carry an RFC 7396 merge patch in place of the whole value. The patch goes from the resource's previous version to its new one, and names both.
+
+- **A delivery patches from the resource's previous version,** since A has no record of what `b` acknowledged (§ *Only the newest version matters*).
+- **A refresh patches from the version `b` names,** while A still keeps it, and otherwise carries the full contents. So `b` applies a delivered patch only when it holds the version the patch starts from, and refreshes when it does not.
+- **The predecessor designed the rest in detail,** and the mining pass brings its rules across.
+
 #### Resources without an `https` URI, in a later phase
 
 Many MCP resources use `file://`, `git://` or a scheme of their own, and a client reads them with `resources/read`, which carries no version today, as Scenario 1a shows. In a phase after the `https` one, each entry of a read's `contents` carries its version in `_meta`, under a key to be agreed with the Filesystems working group, whose strawman gives each resource a `version` too, and with the Transports working group's Definition Tags in view:
@@ -534,37 +560,40 @@ Many MCP resources use `file://`, `git://` or a scheme of their own, and a clien
 
 A `notify` delivery then tells the client to read, and the read's version tells it whether it got the delivered version or a later one.
 
-#### The `patch` form, in a later phase
-
-For a resource whose contents are JSON, a delivery can carry an RFC 7396 merge patch in place of the whole value. The patch goes from the resource's previous version to its new one, and names both.
-
-- **A assumes `b` holds the previous version.** It has no record of what `b` acknowledged, by the rule in § *Only the newest version matters*, so it cannot patch from anything else.
-- **`b` applies a patch only when it holds the version the patch starts from.** When it does not, because a delivery was missed, `b` refreshes, and the `full` form's refresh result brings it the current contents.
-- **A refresh can patch from the version `b` names,** since A keeps each resource's earlier versions, so `b` need not take the whole value after a gap. A version A no longer keeps gets the full contents.
-- **The predecessor designed the rest in detail,** and the mining pass brings its rules across.
+A serves its lists a second way for this phase, under a scheme of its own, as `lists:///inbox/groceries`, readable only through `resources/read`, so no `GET` and no `ETag` reach them.
 
 #### What the extension adds to the wire
 
-Everything about delivering a webhook is SEP-3415's. The extension adds two methods, their parameters and results, and the body a change delivers, written in the spec's style. The `patch` form adds a variant to `ResourceChange` in its phase.
+Everything about delivering a webhook is SEP-3415's. The extension adds a capability, two methods, their parameters and results, and the body a change delivers, written in the spec's style and built on `schema.ts`'s own types. The `patch` form adds a variant to `ResourceChange` in its phase.
+
+A declares the extension in `server/discover`, which is how `b` learns that A offers `full` (R1):
+
+```jsonc
+"capabilities": { "extensions": {
+  "io.modelcontextprotocol/resource-webhooks": { "forms": ["notify", "full"] } } }
+```
 
 ```ts
 type SubscriptionTarget =
   | { uri: string }                     // the resource and all under it
   | { uriTemplate: string }             // each match, and all under it
   | { listed: true };                   // every resource resources/list returns
-type ResourceWebhookSubscribeParams = SubscriptionTarget & {
+interface ResourceWebhooksSettings {    // under capabilities.extensions
+  forms: ("notify" | "full" | "patch")[];
+}
+type ResourceWebhookSubscribeParams = RequestParams & SubscriptionTarget & {
   form?: "notify" | "full";             // notify when omitted
   version?: string;                     // one resource: the version held
   cursor?: string;                      // a collection: the last result's cursor
   delivery: { url: string; secret: string };
   ttlMs?: number | null;                // as SEP-3415's events/subscribe
 };
-interface ResourceWebhookSubscribeResult {
+interface ResourceWebhookSubscribeResult extends Result {
   id: string;
   refreshBefore: string | null;
   version?: string;                     // one resource: its current version
   deleted?: true;                       // that version deleted the resource
-  contents?: ResourceContents[];        // full form, if the version differs
+  contents?: (TextResourceContents | BlobResourceContents)[];  // full form
   changes?: ResourceChange[];           // a collection: each member changed
                                         // since the cursor, at its newest version
   cursor?: string;                      // a collection: where this result stops
@@ -572,19 +601,21 @@ interface ResourceWebhookSubscribeResult {
   reset?: true;                         // changes lists every member there is
   deliveryStatus?: DeliveryStatus;      // as SEP-3415 defines it
 }
-type ResourceWebhookUnsubscribeParams = SubscriptionTarget & {
+type ResourceWebhookUnsubscribeParams = RequestParams & SubscriptionTarget & {
   delivery: { url: string };
 };
+type ResourceWebhookUnsubscribeResult = Result;
 type ResourceChange = { uri: string } & (
   | { form: "notify"; version: string }
   | { form: "notify"; version: string; deleted: true }
-  | { form: "full"; version: string; contents: ResourceContents[] }
+  | { form: "full"; version: string;
+      contents: (TextResourceContents | BlobResourceContents)[] }
 );
 ```
 
 #### What it takes from SEP-3415, and what it replaces
 
-- **Taken by reference, from § *Webhook-Based Delivery*:**
+- **Taken by reference, from § *Webhook-Based Delivery* (R17):**
   - the TTL and refresh rules
   - the forward-proxy deployment, in which the webhook URL belongs to a gateway acting for the client
   - endpoint verification, with the secret added to the key of its cache
@@ -597,13 +628,12 @@ type ResourceChange = { uri: string } & (
   - the retry bounds and suspension
   - eager unsubscribe
   - the header `X-MCP-Subscription-Id` and the two well-known webhook paths, though SEP-3415 reserves them for Events, which makes their reuse the one departure, D1 in [sep-notes.md](../sep-notes.md)
-- **Replaced.** sep-notes.md sorts each of these into a plain substitution or a narrowing within the room SEP-3415 leaves:
-  - **The key.** The subscription key is `(principal, delivery.url, target)`: who asked, the webhook URL deliveries go to, and the resource URI, template or `listed` they cover. It identifies a subscription for refresh and unsubscribe, and a server's storage keys subscriptions by it or by the `id` derived from it. A target is its kind and its value, compared exactly, as `uri` with `.../server/A/notes/inbox/note-42`, so the key needs no canonical form of JSON arguments (R6). The form is not part of it, because it changes only what a delivery carries, so a refresh may change it. A principal that watches one target from two places gives each place its own `delivery.url`, as SEP-3415's example `/hooks/client123` does, and an unsubscribe names the webhook URL of the one it ends.
-  - **The subscription `id`** is a keyed hash of the key, so a logged `id` cannot be used to test a guessed principal.
-  - **The body.** A `ResourceChange` takes the place of an `EventOccurrence`.
-  - **The retry model.** Only the newest version of each URI is retried, with pending versions coalesced, where SEP-3415 retries each event on its own.
-  - **No replay, no `gap` envelope and no `truncated` for one resource.** The version a subscriber names on each refresh does their work. A collection's catch-up uses this extension's own cursor (§ *Collections*).
-- **Its error codes, reused as SEP-3415 intends.** It calls its five new codes general-purpose, "named for reuse across MCP and are not scoped to events". So this extension answers an undeclared form with `Unsupported`, a refused principal with `Forbidden`, an unsubscribe that matches nothing with `NotFound`, a server limit with `ResourceExhausted`, and a callback that fails verification with `CallbackEndpointError`. SEP-3415's Open Question 7 asks whether these become new codes at all, and this extension follows its answer. An unknown URI is refused with `-32602`, as `resources/read` refuses it.
+- **Replaced or narrowed,** as sep-notes.md sorts them:
+  - **The key** is `(principal, delivery.url, target)`, without the form, so a refresh may change the form, and a principal that watches one target from two places gives each place its own `delivery.url` (R6).
+  - **The subscription `id`** is a keyed hash of the key (R25, N3).
+  - **The body** is a `ResourceChange`, and **the retry model** coalesces to the newest version of each URI (R17, N1).
+  - **One resource has no replay, `gap` or `truncated`,** and a collection's catch-up has a cursor of its own (R17, R32 to R35).
+- **Its error codes, reused as SEP-3415 intends.** It calls its five new codes general-purpose, "named for reuse across MCP and are not scoped to events". So this extension answers an undeclared form with `Unsupported`, a refused principal with `Forbidden`, an unsubscribe that matches nothing with `NotFound`, a server limit with `ResourceExhausted`, and a callback that fails verification with `CallbackEndpointError` (R29). SEP-3415's Open Question 7 asks whether these become new codes at all, and this extension follows its answer. An unknown URI is refused with `-32602`, as `resources/read` refuses it (R7).
 - **Not used:** `events/list`, `events/poll` and `events/stream`. Level 1 uses Events' methods, and level 2 uses its own.
 
 ### What building it should teach us
@@ -623,7 +653,7 @@ type ResourceChange = { uri: string } & (
 
 ## Constraints
 
-- **MCP 2026-07-28's `schema.ts` is the only schema.** `ResourceContents` and its kinds are reused from it, and runtime validation is derived from its TypeScript types, as CLAUDE.md sets out.
+- **MCP 2026-07-28's `schema.ts` is the only schema.** `RequestParams`, `Result`, `TextResourceContents` and `BlobResourceContents` are reused from it, and runtime validation is derived from its TypeScript types, as CLAUDE.md sets out.
 - **SEP-3415's text is cited at the PR's head commit, b0efd11,** so a later revision cannot change the meaning of either level unnoticed.
 - **SEP-2133 binds the extension:** Apache-2.0, Extensions Track, and an official-SDK reference implementation before review.
 - **Cloudflare Workers and Durable Objects host the prototype,** under `critical.md`'s rules for storage, secrets and `compatibility_date`.
@@ -631,7 +661,7 @@ type ResourceChange = { uri: string } & (
 ## Future state
 
 - ⚠️ Design consideration: **a webhook delivery SEP of its own.** Once a second extension takes SEP-3415's webhook delivery by reference, the delivery rules might be better in a SEP that both build on. The first sign is D1 in sep-notes.md: SEP-3415 reserves its webhook header and well-known paths for Events, and this extension reuses them. Not proposed now (Larry, 2026-10-21).
-- ⚠️ Design consideration: **delivery over a client's open stream.** If Felix's `extensions` member on `subscriptions/listen`'s filter lands, level 2 could also deliver over that stream, under this extension's identifier, to a client that holds one, without departing from SEP-3371. Until then, this extension stays off that stream.
+- ⚠️ Design consideration: **delivery over a client's open stream.** Peter would rather extend `subscriptions/listen` than add a parallel stream (§ *Timing and political considerations*). If Felix's `extensions` member on `subscriptions/listen`'s filter lands, level 2 could also deliver over that stream, under this extension's identifier, to a client that holds one, without departing from SEP-3371. Until then, this extension stays off that stream.
 - **Hosting on an SDK.** The official-SDK implementation tests what SEP-3371's rules cannot: whether an extension's handlers learn of resource changes, the gap in § *Technical*, and whether its extension points carry outbound webhooks and timed retries.
 - **Tasks.** Open Question 6 and ext-tasks #24 ask for the same thing on task state, and a task exposed as a resource gets level 2 unchanged.
 - **A mirror,** where a subscriber keeps copies at the server's versions and serves them to readers of its own, as the predecessor designed. The design covers a client behind a gateway instead.
@@ -639,7 +669,7 @@ type ResourceChange = { uri: string } & (
 
 ## Open questions
 
-None now. The last ones, how a collection catches up, how its catch-up pages, and the names, are rows in § *Decisions*.
+None.
 
 ## Decisions
 
@@ -663,7 +693,7 @@ None now. The last ones, how a collection catches up, how its catch-up pages, an
 | The names are the extension identifier `io.modelcontextprotocol/resource-webhooks`, the methods `resources/webhooks/subscribe` and `resources/webhooks/unsubscribe`, and the target `listed`, and the PR asks whether the methods want a prefix of their own (2026-10-25) | A prefix of the extension's own, as SEP-3371's example names a method `com.example/search` after its extension: SDKs match method names exactly, so nothing requires one, while `resources/` belongs to the core specification, which is why the PR asks. |
 | Subscribing requires an authenticated principal, as SEP-3415 does, from MCP's OAuth flow with an authorization server that verifies no identity, as Peter's reference server has (Larry, 2026-10-20) | Anonymous callers sharing one principal: any of them could unsubscribe another or replace its secret. A login endpoint handing out a random token: the same idea outside the OAuth flow every MCP client already speaks. Requiring the old secret to unsubscribe or rotate: a client that lost its secret could only wait out the TTL, and the secret, held by gateways, would become a credential. |
 | Endpoint verification is cached per `(principal, delivery.url, delivery.secret)` (Larry, 2026-10-20) | Per `(principal, url)`, as SEP-3415 does: a principal that verified a webhook URL once could subscribe it again with a secret the receiver never held, and flood it. Per `(url, secret)` alone: two principals holding one secret would share a verification, which SEP-3415 rules out. |
-| The server stores no per-subscription record of the version each subscriber acknowledged, and a patch starts from the resource's previous version (Larry, 2026-10-21) | Recording acknowledgements: on a Durable Object, one change watched by 1000 subscriptions would cost 1000 writes instead of one, writes being the most expensive operation, while a refresh on reconnect repairs a miss. No service that syncs state over webhooks records a delivery position per subscriber either. |
+| The server stores no per-subscription record of the version each subscriber acknowledged, and a delivery's patch starts from the resource's previous version (Larry, 2026-10-21) | Recording acknowledgements: on a Durable Object, one change watched by 1000 subscriptions would cost 1000 writes instead of one, writes being the most expensive operation, while a refresh on reconnect repairs a miss. Dropbox, Google Drive and Calendar, Gmail and Microsoft Graph record no delivery position per subscriber either: each treats its pushes as lossy and leaves catching up to the client. |
 | Resources without an `https` URI are in scope, in a later phase, with their version in `resources/read`'s `_meta` (Larry, 2026-10-20) | `https` only: a client could not tell whether a read is newer than a delivery, so every other resource would be left out. |
 | The field is `version`, with the semantics of HTTP's `ETag`: compared for equality, never required to sort (Larry, 2026-10-20) | `eTag`, Larry's own preference: the Filesystems strawman already says `version`, and following the group matters more. |
 | What this extension suggests for SEP-3415 itself, such as the secret in the verification cache's key and the scope of its reservations, reaches Peter with the PR to the working group's repo, not while SEP-3415 is up for its vote (Larry, 2026-10-21) | Raising them in Discord now: Peter is busy with the vote and the SDK work, Events can still change after acceptance since it is not yet stable, and the PR shows why in context. |

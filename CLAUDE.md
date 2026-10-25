@@ -42,7 +42,7 @@ Linked from lumenize: `/write-task`, `/review-task`, `/build-task` and `/refacto
 
 - When a linked skill names a repo path that does not exist here, such as `tasks/README.md`, read it from `../lumenize/`. New files the skill writes, a task archive included, go in this repo.
 - Run the prose checker as `node ../lumenize/scripts/check-prose.mjs <file>`.
-- `/review-task`'s product lens is not Lumenize's `docs/vision/`. Here it is the SEPs, the charter of the Tasks and Events working group (named Triggers & Events until 2026-10-21), and what earns standing with the working group. The task file's design intent states it.
+- `/review-task`'s product lens is not Lumenize's `docs/vision/`. Here it is the SEPs, the charter of the Tasks and Events working group (named Triggers & Events until 2026-10-16), and what earns standing with the working group. The task file's design intent states it.
 - Not linked: `/live`, `/nightly-pass` and `/release-workflow`, which drive Lumenize's systems; the doc-example skills, which are for Lumenize's website; and `/task-management`, because work here is always task-file-first.
 
 ## Sibling repos

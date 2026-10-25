@@ -6,7 +6,7 @@ What Larry says while the demo runs, beat by beat. The beats follow the scenario
 
 Picture a client watching a note. Its laptop closes, the note changes three times, and when the laptop wakes the client wants the note as it is now, not a replay of every edit. The Events SEP's Open Question 6 has the same case for tasks: "kick off a long job, close the laptop, get notified when done".
 
-Re-expressing today's resource notification as an event sits on top of the Events SEP with nothing added, exactly as its Open Question 2 sketches it. So we'll start there, and demo it quickly. It is also the baseline that everything after it is measured against.
+Re-expressing today's resource notification as an event sits on top of the Events SEP with nothing added, using the event type its Open Question 2 sketches. So we'll start there, and demo it quickly. It is also the baseline that everything after it is measured against.
 
 The more interesting question is Open Question 6, on exposing a task's state changes as events, together with Peter's question on the SEP's thread, whether watching state is really the same abstraction as consuming messages. That is where prototyping pays off, so I built [N] flavors of state synchronization. They differ mostly in how much they add to or change in the SEPs underneath them, traded against how elegant the result is for keeping state in sync.
 
