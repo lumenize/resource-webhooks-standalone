@@ -1,0 +1,82 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+        "DeleteNoteArguments": {
+            "additionalProperties": false,
+            "description": "Deletes a note. With `version`, it deletes only if the note is still at that version.",
+            "properties": {
+                "uri": {
+                    "description": "The note's URI.",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "The version the note must be at.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "uri"
+            ],
+            "type": "object"
+        },
+        "Note": {
+            "additionalProperties": false,
+            "description": "A note, such as `{ \"title\": \"Buy milk\", \"due\": \"2026-10-24\" }`.",
+            "properties": {
+                "done": {
+                    "type": "boolean"
+                },
+                "due": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "title"
+            ],
+            "type": "object"
+        },
+        "NoteVersion": {
+            "additionalProperties": false,
+            "description": "The version a write or a deletion made, such as `{ \"uri\": \"https://…/note-42\", \"version\": \"e0.18\" }`.",
+            "properties": {
+                "uri": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "uri",
+                "version"
+            ],
+            "type": "object"
+        },
+        "WriteNoteArguments": {
+            "additionalProperties": false,
+            "description": "Writes a note, creating it or replacing it. With `version`, it writes only if the note is\nstill at that version, as HTTP's If-Match does.",
+            "properties": {
+                "note": {
+                    "$ref": "#/$defs/Note"
+                },
+                "uri": {
+                    "description": "The note's URI, such as `https://….workers.dev/server/A/notes/inbox/note-42`.",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "The version the note must be at, such as `e0.17`.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "note",
+                "uri"
+            ],
+            "type": "object"
+        }
+    }
+}
+

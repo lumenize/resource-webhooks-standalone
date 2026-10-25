@@ -15,8 +15,9 @@ afterEach(() => {
 // Runs `generate-schemas.mjs --check` on a copy of src/ whose types may have been edited.
 function check(edit: (types: string) => string): { exitCode: number; output: string } {
   scratch = mkdtempSync(join(tmpdir(), 'schema-check-'));
-  cpSync(join(import.meta.dirname, '../../src/resource-types.ts'), join(scratch, 'src/resource-types.ts'));
-  cpSync(join(import.meta.dirname, '../../src/resource-types.schema.json'), join(scratch, 'src/resource-types.schema.json'));
+  for (const file of ['resource-types.ts', 'resource-types.schema.json', 'tool-types.ts', 'tool-types.schema.json']) {
+    cpSync(join(import.meta.dirname, '../../src', file), join(scratch, 'src', file));
+  }
   const types = join(scratch, 'src/resource-types.ts');
   writeFileSync(types, edit(readFileSync(types, 'utf-8')));
   try {

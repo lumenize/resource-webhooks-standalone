@@ -16,6 +16,7 @@ interface Route {
 
 /** Every route the edge lets reach A. */
 const SERVER_ROUTES: readonly Route[] = [
+  { path: /^\/mcp$/, methods: ['POST'] },
   { path: /^\/(notes|lists)(\/.*)?$/, methods: ['GET', 'HEAD', 'PUT', 'DELETE'] },
 ];
 

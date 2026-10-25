@@ -1,6 +1,6 @@
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { VersionStore } from '../../src/version-store';
+import { VersionStore } from '../../src/server-role/version-store';
 import { newLane, type Lane } from './lane';
 
 const BUY_MILK = '{"title":"Buy milk"}';

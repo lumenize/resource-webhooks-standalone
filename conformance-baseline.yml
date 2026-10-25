@@ -1,0 +1,27 @@
+# The 2026-07-28 checks A is known to fail, for `npm run conformance`. Each names a feature
+# this prototype has no use for. The suite fails the run on any failure not listed here, and on
+# any listed one that starts to pass.
+server:
+  # A offers no prompts or completions.
+  - completion-complete:completion-complete
+  - prompts-list:prompts-list
+  - prompts-get-simple:prompts-get-simple
+  - prompts-get-with-args:prompts-get-with-args
+  - prompts-get-embedded-resource:prompts-get-embedded-resource
+  - prompts-get-with-image:prompts-get-with-image
+  - caching:sep-2549-prompts-list-caching-hints
+  # A answers every request in JSON, so it has no stream to send progress on.
+  - tools-call-with-progress:tools-call-with-progress
+  # A asks a client for no input, so it never answers with an InputRequiredResult.
+  - input-required-result-basic-elicitation:sep-2322-elicitation-incomplete
+  - input-required-result-basic-sampling:sep-2322-sampling-incomplete
+  - input-required-result-basic-list-roots:sep-2322-list-roots-incomplete
+  - input-required-result-request-state:sep-2322-request-state-incomplete
+  - input-required-result-multiple-input-requests:sep-2322-multiple-inputs-incomplete
+  - input-required-result-multi-round:sep-2322-multi-round-r1
+  - input-required-result-missing-input-response:sep-2322-missing-response-rerequests
+  - input-required-result-non-tool-request:sep-2322-non-tool-incomplete
+  - input-required-result-result-type:sep-2322-result-type-included
+  - input-required-result-tampered-state:sep-2322-reject-tampered-state
+  - input-required-result-capability-check:sep-2322-respect-client-capabilities
+  - input-required-result-ignore-extra-params:sep-2322-ignore-unexpected-params

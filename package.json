@@ -14,7 +14,8 @@
     "type-check": "tsc --noEmit",
     "types": "wrangler types --env-file .dev.vars.example --strict-vars false",
     "generate:schema": "node scripts/generate-schemas.mjs",
-    "check:schema": "node scripts/generate-schemas.mjs --check"
+    "check:schema": "node scripts/generate-schemas.mjs --check",
+    "conformance": "node scripts/conformance.mjs"
   },
   "dependencies": {
     "@cfworker/json-schema": "4.1.1"

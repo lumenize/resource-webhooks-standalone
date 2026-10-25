@@ -1,0 +1,22 @@
+{
+  // The conformance suite's local Worker, run by scripts/conformance.mjs under `wrangler dev`,
+  // which sets CONFORMANCE on the command line. Never deployed.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "test-resource-webhooks-conformance",
+  "main": "src/conformance/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "durable_objects": {
+    "bindings": [{ "name": "SERVER", "class_name": "Server" }]
+  },
+  "exports": {
+    "Server": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "vars": {
+    // The suite's DNS-rebinding check sends this exact origin, port included.
+    "ORIGIN": "http://localhost:8788",
+    "SERVER_INSTANCE": "A",
+    "CUTOFF_WINDOW_MS": "86400000"
+  },
+  "dev": { "port": 8788, "ip": "localhost" }
+}

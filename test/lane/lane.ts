@@ -1,6 +1,7 @@
 // Each test's own A. Storage is shared within a test file, so a test gets an instance name no
 // other test uses, given to the Worker through the binding that names the instance it routes.
 import { env } from 'cloudflare:workers';
+import { createMcpClient, type McpClient } from '../../src/client/mcp-client';
 import worker from '../../src/index';
 
 // Every lane's env, by A's instance name, so a fetch arriving after its test has ended still
@@ -30,6 +31,8 @@ export interface Lane {
   stub: DurableObjectStub<import('../../src/index').Server>;
   /** Requests `path` under A's root, as `/notes/inbox/note-42`. */
   fetch(path: string, init?: RequestInit): Promise<Response>;
+  /** An MCP client of A's endpoint, `{root}/mcp`. */
+  client: McpClient;
 }
 
 export function newLane(): Lane {
@@ -37,11 +40,13 @@ export function newLane(): Lane {
   const laneEnv: Env = { ...env, SERVER_INSTANCE: name };
   lanes.set(name, laneEnv);
   const root = `${env.ORIGIN}/server/${name}`;
+  const send = (input: RequestInfo | URL, init?: RequestInit) => callWorker(new Request(input, init), laneEnv);
   return {
     name,
     root,
     env: laneEnv,
     stub: env.SERVER.getByName(name),
-    fetch: (path, init) => callWorker(new Request(`${root}${path}`, init), laneEnv),
+    fetch: (path, init) => send(`${root}${path}`, init),
+    client: createMcpClient({ endpoint: `${root}/mcp`, clientInfo: { name: 'lane', version: '0.0.0' }, fetch: send }),
   };
 }
