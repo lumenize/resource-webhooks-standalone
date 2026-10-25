@@ -1,6 +1,7 @@
-// A's role as an MCP server of 2026-07-28: its core methods, its two tools, and its notes and
-// lists as resources. It takes a message the transport has already read and checked, and `sql`
-// from its host, so a Lumenize node can compose it as a Durable Object does here.
+// A's role as an MCP server of 2026-07-28: its core methods, its two tools, its notes and lists
+// as resources, and level 1's Events methods. It takes a message the transport has already read
+// and checked, with the principal the edge verified, and from its host `sql`, how to send a
+// webhook and how to keep a promise alive, so a Lumenize node can compose it as A does here.
 import { JsonRpcError } from '../json-rpc';
 import type {
   CallToolResult,
@@ -20,9 +21,13 @@ import type {
   Tool,
 } from '../vendor/mcp-spec/2026-07-28/schema';
 import { INVALID_PARAMS, LATEST_PROTOCOL_VERSION, METHOD_NOT_FOUND } from '../vendor/mcp-spec/2026-07-28/schema';
+import type { EventsSubscribeRequestParams, EventsUnsubscribeRequestParams } from '../events-types';
+import { EVENTS_EXTENSION } from '../events-types';
 import type { DeleteNoteArguments, NoteVersion, WriteNoteArguments } from '../tool-types';
+import { clampSchedule, Deliveries, type DeliveryReport, type Send } from './deliveries';
+import { Events } from './events';
 import { parseTarget, TYPES, type Target } from './targets';
-import { REQUEST_DEFINITIONS, specErrors, toolErrors, toolSchemaFor } from './validation';
+import { requestErrors, toolErrors, toolSchemaFor } from './validation';
 import { VersionStore } from './version-store';
 
 export const SERVER_INFO: Implementation = { name: 'resource-webhooks-standalone', version: '0.0.0' };
@@ -58,7 +63,20 @@ export interface ServerRoleOptions {
   root: string;
   cutoffWindowMs: number;
   extras?: ServerExtras;
+  /** Sends one webhook POST, without following redirects. */
+  send: Send;
+  /** Keeps a promise alive past its request, as `ctx.waitUntil` does. */
+  waitUntil: (promise: Promise<unknown>) => void;
+  /** The delays between delivery attempts A is set to, before they are held to SEP-3415's bounds. */
+  retrySchedule: () => readonly number[];
+  verificationBurst: number;
+  subscriptionIdKey: string;
+  maxTtlMs: number;
+  subscriptionCap: number;
+  report?: (report: DeliveryReport) => void;
 }
+
+type Method = (params: Record<string, unknown>, principal: string | undefined) => Result | Promise<Result>;
 
 type Contents = TextResourceContents | BlobResourceContents;
 
@@ -87,20 +105,43 @@ export class ServerRole {
   readonly store: VersionStore;
   readonly #root: string;
   readonly #extras: ServerExtras;
+  readonly #deliveries: Deliveries;
+  readonly #events: Events;
   // A Map, so a method named after something on Object.prototype, as `constructor`, finds nothing.
-  readonly #methods: ReadonlyMap<string, (params: Record<string, unknown>) => Result>;
+  readonly #methods: ReadonlyMap<string, Method>;
 
-  constructor({ sql, root, cutoffWindowMs, extras = {} }: ServerRoleOptions) {
-    this.store = new VersionStore(sql, { cutoffWindowMs });
+  constructor(options: ServerRoleOptions) {
+    const { sql, root, cutoffWindowMs, extras = {} } = options;
     this.#root = root;
     this.#extras = extras;
-    this.#methods = new Map<string, (params: Record<string, unknown>) => Result>([
+    this.#deliveries = new Deliveries({
+      send: options.send,
+      waitUntil: options.waitUntil,
+      schedule: () => clampSchedule(options.retrySchedule()),
+      verificationBurst: options.verificationBurst,
+      report: options.report,
+    });
+    this.#events = new Events({
+      sql,
+      root,
+      deliveries: this.#deliveries,
+      subscriptionIdKey: options.subscriptionIdKey,
+      maxTtlMs: options.maxTtlMs,
+      subscriptionCap: options.subscriptionCap,
+    });
+    this.store = new VersionStore(sql, { cutoffWindowMs, onWrite: (path, version) => this.#events.notify(`${root}${path}`, version) });
+    this.#methods = new Map<string, Method>([
       ['server/discover', () => this.#discover()],
       ['tools/list', (params) => this.#listTools(params)],
       ['tools/call', (params) => this.#callTool(params)],
       ['resources/list', (params) => this.#listResources(params)],
       ['resources/templates/list', (params) => this.#listTemplates(params)],
       ['resources/read', (params) => this.#read(params)],
+      ['events/list', (params) => (requireNoCursor(params), this.#events.list())],
+      ['events/subscribe', (params, principal) => this.#events.subscribe(params as unknown as EventsSubscribeRequestParams, principal)],
+      ['events/unsubscribe', (params, principal) => this.#events.unsubscribe(params as unknown as EventsUnsubscribeRequestParams, principal)],
+      ['events/poll', () => this.#events.refuseMode()],
+      ['events/stream', () => this.#events.refuseMode()],
     ]);
   }
 
@@ -109,20 +150,31 @@ export class ServerRole {
    * `JsonRpcError` for an unknown method, for params the spec's schema refuses, and for a
    * request A cannot answer.
    */
-  handle(request: JSONRPCRequest): Result {
+  async handle(request: JSONRPCRequest, principal?: string): Promise<Result> {
     const method = this.#methods.get(request.method);
     if (!method) throw new JsonRpcError(METHOD_NOT_FOUND, `Method not found: ${request.method}`);
-    const errors = specErrors(REQUEST_DEFINITIONS.get(request.method)!, request);
+    const errors = requestErrors(request) ?? [];
     if (errors.length > 0) throw new JsonRpcError(INVALID_PARAMS, 'Invalid params', errors.slice(0, 10));
-    const result = method(request.params ?? {});
+    const result = await method(request.params ?? {}, principal);
     return { ...result, _meta: { 'io.modelcontextprotocol/serverInfo': SERVER_INFO, ...result._meta } };
+  }
+
+  /**
+   * Forgets every note, subscription, verification and pending delivery, and raises the epoch,
+   * as the page's Wipe does. Answers the new epoch.
+   */
+  wipe(): number {
+    this.#deliveries.clear();
+    this.#events.clear();
+    return this.store.wipe();
   }
 
   #discover(): DiscoverResult {
     return {
       resultType: 'complete',
       supportedVersions: [LATEST_PROTOCOL_VERSION],
-      capabilities: { tools: {}, resources: {} },
+      // An empty settings object: A sends no list-change notifications.
+      capabilities: { tools: {}, resources: {}, extensions: { [EVENTS_EXTENSION]: {} } },
       ...UNCACHED,
     };
   }

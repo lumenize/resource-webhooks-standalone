@@ -13,6 +13,8 @@ type ConformanceEnv = Env & { CONFORMANCE?: string };
 // subscribe a webhook, which it must never reach without a principal of its own.
 const NEVER_OPENED = new Set(['resources/webhooks/subscribe', 'resources/webhooks/unsubscribe']);
 
+export { Gateway } from '../gateway';
+
 export class Server extends DemoServer {
   static extras = FIXTURES;
 }

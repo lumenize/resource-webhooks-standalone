@@ -7,10 +7,14 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["global_fetch_strictly_public"],
   "durable_objects": {
-    "bindings": [{ "name": "SERVER", "class_name": "Server" }]
+    "bindings": [
+      { "name": "SERVER", "class_name": "Server" },
+      { "name": "GATEWAY", "class_name": "Gateway" }
+    ]
   },
   "exports": {
-    "Server": { "type": "durable-object", "storage": "sqlite" }
+    "Server": { "type": "durable-object", "storage": "sqlite" },
+    "Gateway": { "type": "durable-object", "storage": "sqlite" }
   },
   "vars": {
     // The suite's DNS-rebinding check sends this exact origin, port included.
@@ -18,7 +22,13 @@
     "SERVER_INSTANCE": "A",
     "GATEWAY_INSTANCE": "B",
     "REGISTRATION_CAP": "1000",
-    "CUTOFF_WINDOW_MS": "86400000"
+    "CUTOFF_WINDOW_MS": "86400000",
+    "RETRY_SCHEDULE_MS": "30000,120000,300000",
+    "ATTEMPT_TIMEOUT_MS": "5000",
+    "SUBSCRIPTION_TTL_MS": "3600000",
+    "SUBSCRIPTION_CAP": "100",
+    "VERIFICATION_BURST": "10",
+    "HEARTBEAT_MS": "30000"
   },
   "dev": { "port": 8788, "ip": "localhost" }
 }

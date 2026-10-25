@@ -28,15 +28,20 @@ interface VersionRow extends Record<string, SqlStorageValue> {
   deleted: number;
 }
 
+/** Told of every write, with the path written, the version it made and whether it deleted. */
+export type WriteListener = (path: string, version: string, deleted: boolean) => void;
+
 export class VersionStore {
   readonly #sql: SqlStorage;
   readonly #cutoffWindowMs: number;
+  readonly #onWrite?: WriteListener;
 
   /** `cutoffWindowMs` is how long a superseded row or a deletion stays before a write prunes it. */
-  constructor(sql: SqlStorage, options: { cutoffWindowMs: number }) {
+  constructor(sql: SqlStorage, options: { cutoffWindowMs: number; onWrite?: WriteListener }) {
     if (!(options.cutoffWindowMs > 0)) throw new RangeError(`The cut-off window must be a positive number of ms, not ${options.cutoffWindowMs}`);
     this.#sql = sql;
     this.#cutoffWindowMs = options.cutoffWindowMs;
+    this.#onWrite = options.onWrite;
     sql.exec(`
       CREATE TABLE IF NOT EXISTS Versions (
         stamp INTEGER PRIMARY KEY,
@@ -108,6 +113,17 @@ export class VersionStore {
       .map((row) => row.path);
   }
 
+  /**
+   * Empties the store and raises the epoch, as a Wipe does. The epoch survives, so no version
+   * minted after is one minted before.
+   */
+  wipe(): number {
+    const epoch = this.epoch() + 1;
+    this.#sql.exec('DELETE FROM Versions');
+    this.#sql.exec('INSERT OR REPLACE INTO Epoch (id, value) VALUES (1, ?)', epoch);
+    return epoch;
+  }
+
   #live(path: string): Current | undefined {
     const current = this.current(path);
     return current && !current.deleted ? current : undefined;
@@ -127,7 +143,9 @@ export class VersionStore {
       )
       .one();
     this.#prune(now);
-    return this.#version(stamp);
+    const version = this.#version(stamp);
+    this.#onWrite?.(path, version, contents === null);
+    return version;
   }
 
   // Drops rows older than the cut-off window, but keeps each live resource's newest row. It

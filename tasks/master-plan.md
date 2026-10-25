@@ -271,7 +271,8 @@ A lists the type in `events/list`, as Open Question 2 sketches it, carrying in `
   "description": "A resource changed",
   "delivery": ["webhook"],
   "inputSchema": { "type": "object", "required": ["uri"],
-                   "properties": { "uri": { "type": "string" } } },
+                   "properties": { "uri": { "type": "string" } },
+                   "additionalProperties": false },
   "payloadSchema": { "type": "object", "required": ["uri"],
                      "properties": { "uri": { "type": "string" } } } }
 ```
@@ -865,10 +866,10 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
      - A receiver answering `401` is retried on A's schedule, each retry with a new `webhook-timestamp` and a signature that verifies, and no POST follows the last attempt. Mutation: reuse the first attempt's headers.
      - While `b`'s socket is closed, B answers `503`, and A's retry delivers once `b` reconnects. Mutation: answer `200` with no socket.
      - With `b`'s pings stopped and its socket still open, B answers `503` once the last ping is two intervals old. Mutation: trust an open socket.
-     - With `b`'s old socket still open after a reconnect, a delivery signed with the newest secret verifies and goes down the newest socket only. Mutation: use the first socket found.
+     - On a reconnect B closes the older socket with `4000`, and a delivery signed with the newest secret verifies and goes down the newest socket only, while one signed with the older secret answers `401`. Mutation: keep the older socket open.
      - B closes a socket when its token expires, with code `4401`. Mutation: leave it open.
      - An upgrade to `/gateway/B/ws/b` with no token, A's MCP token, `b`'s token used on `/gateway/B/ws/c`, or an expired token answers `401` with no Gateway woken, and a cross-origin upgrade answers `403` before the hook runs. Mutation: drop each check in turn.
-     - The subscribe waits for B's acknowledgement that it stored `b`'s secret, and passes on every run. Mutation: subscribe before the acknowledgement.
+     - The subscribe waits for B's acknowledgement that it stored `b`'s secret, and passes on every run. Mutation: skip the wait, which fails the reconnect test, whose POST reaches B right after the socket opens. The subscribe itself passes without the wait in the lane, where A's challenge always reaches B after `b`'s socket message, so phase 5 tries it on the deployed Worker.
      - A challenge signed with a secret B never registered, an echo with one character changed, and a reused nonce each fail with `CallbackEndpointError` and `challenge_failed`. Mutation: answer every challenge.
      - The same principal subscribing the same URL to a new target sends no challenge, a second principal is challenged, and after `evictDurableObject(A)` the next subscribe is challenged again. Mutation: cache per URL alone.
      - Past the token bucket, a verification POST to one host is refused with `ResourceExhausted`. Mutation: lift the bucket.
@@ -887,6 +888,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
    - **Success criteria:**
      - Level 1's scenario tests pass against the deployed Worker. Mutation: deploy with a broken signer.
      - The SSRF measurement reruns over `https` through A's own delivery path, subscribing with `delivery.url` at sslip.io and nip.io names. Each address gets the code `sep-notes.md` records, Google's address through both services is reached in the same run, the three addresses that time out do so, and a rebinding service that takes a nonce forces a fresh resolution on every fetch. Mutation: list the public control among the refused, once, to see the test fail.
+     - Phase 4's test that the subscribe waits for B's acknowledgement runs against the deployed Worker without the wait as well, and `sep-notes.md` § *Findings* records whether a challenge then reaches B before `b`'s secret does. Mutation: none; this measures rather than gates.
      - A deploy without `global_fetch_strictly_public` records in `sep-notes.md` § *Findings* what A's POST to B then gets, since Cloudflare's docs say error 1042 and a Lumenize measurement saw a Durable Object reach its own workers.dev URL without the flag. Mutation: none; this measures rather than gates.
 6. **Level 2 for one resource.** This builds this extension's own methods, and shows Scenarios 3 to 8.
    - **Builds:**
@@ -1055,3 +1057,33 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 
 - **The token bucket per host for verification POSTs and the subscription cap per principal belong to phases 4 and 6,** where the handshake and subscriptions are built. This phase built the registration cap.
 
+### Phase 4
+
+**For Larry.**
+
+- **SEP-3415 moved past Sri's suites.** They grade SEP-3415 at `2ec39b9c`, of 2026-10-16, and the plan pins `b0efd11`, of 2026-10-23, the PR's head, which made `webhook-id` separate from `eventId`. A follows `b0efd11`.
+- **Sri's `events-webhook` scenario cannot grade a server that verifies at subscribe time,** as A does and SEP-3415 describes. It subscribes with callbacks under `https://conformance.invalid`, which nothing can reach, so all 29 of its rows went ungraded. `sep-notes.md` § *Findings* has the rest of both suites' results. Whether and how to tell Sri is yours.
+- **The heartbeat is a setting now,** `HEARTBEAT_MS`, 30 seconds deployed and half a second in the lane, so a test watches a socket go quiet with real timers. The page's `b` in phase 8 pings on it too.
+
+**Retro.**
+
+- **Durable Object WebSockets work under the vitest plugin's per-file storage isolation,** at 1.3.6, so level 1's socket tests run in the ordinary lane.
+- **The lane's B is the file's one gateway,** named by `GATEWAY_INSTANCE`, since A's object reads its gateway's name from its own env, which a test cannot vary. Each test's clients are fresh registrations, so their sockets on B never meet.
+- **B drops a socket from `getWebSockets` as soon as it closes it,** by a probe in the lane. So a client has one socket at most, B's sort by connection time was dead code and went, and the reconnect criterion now mutates the superseding itself.
+- **The fetch spy now acts as fetch does for a fake receiver.** It follows a redirect unless the request says `manual`, and rejects once the request's signal aborts. Without both, the `302` and hang mutations could not have failed a test.
+- **`webhook-timestamp` is in seconds,** so the test that each retry is signed afresh needs a second between attempts, and sets A's schedule over the back channel, as the page will.
+- **The lane's schedule, `100,200,400`, makes four attempts.** Two tests first expected three.
+- **B answered `200` when a socket closed while it checked the signature,** with nothing passed on. It answers `503` now, so A retries. No test reaches that race.
+- **The lane shows the race the acknowledgement guards against only for a POST straight to B.** Without the wait, the reconnect test's POST reached B before the new socket's secret did, but a subscribe never failed in fifteen runs, since A's challenge takes longer to reach B than `b`'s socket message. Phase 5 now tries the subscribe on the deployed Worker.
+- **A mutation whose `//` comment swallowed the rest of its line broke the file's parse and read as a survivor,** which happened twice. Each was rerun with `/* */`.
+- **The edge's origin guard is not what refuses a cross-origin upgrade.** `routeDORequest` applies the same CORS policy before `onBeforeConnect`, so the guard matters for preflights and the authorization routes. The mutation now drops the refusal both share, and the test upgrades without a token too, where `403` rather than `401` shows the origin is refused first.
+- **Level 1's `events/subscribe` enforces the subscription cap per principal,** and a test covers it now, though the plan tests the cap in phase 6.
+- **B's own check that a socket's token names its client went,** since the edge refuses such a token before B wakes, and the upgrade test watches that no Gateway is woken.
+- **A Worker with no operator-token binding** is a second vitest project, `lane-closed`, whose bindings leave the token out.
+- **Sri's suites ran from a checkout of each PR at its pinned commit,** the client suite through `scripts/conformance-client.mjs`, which now subscribes to every webhook type a server lists and refreshes each halfway through its grant, as `b` does.
+- **39 mutations, all caught,** 38 by the test aimed at them, and skipping the wait for B's acknowledgement by the reconnect test. Sri's suites found no defect in A, but they showed that no test of A's covered `events/unsubscribe` or an unknown event name, and one does now.
+- **The full suite passes, 250 tests, 23 of them new,** and both conformance gates still exit 0.
+
+**Close-out.**
+
+- **Scenario 2's listing now carries `"additionalProperties": false`,** as A's descriptor does, so A refuses an argument other than `uri`.

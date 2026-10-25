@@ -4,3 +4,9 @@
 
 # Signs A's tokens, client ids, client secrets and codes. Any long random string.
 TOKEN_SIGNING_KEY=
+
+# Keys the hash each subscription's id is derived from. A different long random string.
+SUBSCRIPTION_ID_KEY=
+
+# What the page sends with a control, such as the Wipe. Without it, every control is refused.
+OPERATOR_TOKEN=

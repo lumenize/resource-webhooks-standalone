@@ -8,10 +8,14 @@
   "compatibility_flags": ["global_fetch_strictly_public"],
   "assets": { "directory": "./public" },
   "durable_objects": {
-    "bindings": [{ "name": "SERVER", "class_name": "Server" }]
+    "bindings": [
+      { "name": "SERVER", "class_name": "Server" },
+      { "name": "GATEWAY", "class_name": "Gateway" }
+    ]
   },
   "exports": {
-    "Server": { "type": "durable-object", "storage": "sqlite" }
+    "Server": { "type": "durable-object", "storage": "sqlite" },
+    "Gateway": { "type": "durable-object", "storage": "sqlite" }
   },
   "vars": {
     // The Worker's own origin, and the only one whose requests it accepts. A constant per
@@ -23,7 +27,20 @@
     // How many clients may register with A's authorization server between Wipes.
     "REGISTRATION_CAP": "1000",
     // How long A keeps a superseded version, or a deletion, before a later write prunes it.
-    "CUTOFF_WINDOW_MS": "86400000"
+    "CUTOFF_WINDOW_MS": "86400000",
+    // The delays between A's delivery attempts, held to SEP-3415's bounds of 3 to 5 attempts
+    // over at most 15 minutes.
+    "RETRY_SCHEDULE_MS": "30000,120000,300000",
+    // How long one delivery attempt may take before it counts as a timeout.
+    "ATTEMPT_TIMEOUT_MS": "5000",
+    // The longest subscription A grants, and the one it grants when asked for none.
+    "SUBSCRIPTION_TTL_MS": "3600000",
+    // How many subscriptions one principal may hold.
+    "SUBSCRIPTION_CAP": "100",
+    // How many verification POSTs one host may receive in a burst, refilled one a minute.
+    "VERIFICATION_BURST": "10",
+    // How often a client pings B on its socket. B treats a socket two intervals quiet as closed.
+    "HEARTBEAT_MS": "30000"
   },
   "observability": { "enabled": true }
 }

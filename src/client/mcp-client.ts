@@ -51,6 +51,10 @@ const NAME_SOURCES: ReadonlyMap<string, 'name' | 'uri'> = new Map([
   ['tools/call', 'name'],
   ['resources/read', 'uri'],
   ['prompts/get', 'name'],
+  ['events/subscribe', 'name'],
+  ['events/unsubscribe', 'name'],
+  ['events/poll', 'name'],
+  ['events/stream', 'name'],
 ]);
 
 export function createMcpClient({ endpoint, clientInfo, oauth, fetch: send = fetch }: McpClientOptions): McpClient {

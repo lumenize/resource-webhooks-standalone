@@ -55,7 +55,18 @@ const PLATFORM = [
 ];
 
 // What a role module may import, so it cannot reach the platform through another module.
-const ROLE_IMPORTS = [/^\.\/[\w-]+$/, /^\.\.\/(json-rpc|tool-types|resource-types)$/, /^\.\.\/[\w-]+\.schema\.json$/, /^\.\.\/vendor\/mcp-spec\//, /^@cfworker\/json-schema$/];
+const ROLE_IMPORTS = [
+  /^\.\/[\w-]+$/,
+  /^\.\.\/(json-rpc|tool-types|resource-types|events-types|standard-webhooks)$/,
+  /^\.\.\/[\w-]+\.schema\.json$/,
+  /^\.\.\/vendor\/mcp-spec\//,
+  /^@cfworker\/json-schema$/,
+];
+const ROLE_DIRECTORIES = ['src/server-role', 'src/gateway-role'];
+
+function roleFiles(): string[] {
+  return ROLE_DIRECTORIES.flatMap((directory) => readdirSync(join(ROOT, directory)).filter((file) => file.endsWith('.ts')).map((file) => `${directory}/${file}`));
+}
 
 function importsOf(file: string): string[] {
   return [...readFileSync(join(ROOT, file), 'utf-8').matchAll(/^import[^'"]*['"]([^'"]+)['"]/gm)].map((match) => match[1]);
@@ -66,18 +77,15 @@ function platformUses(file: string): string[] {
   return PLATFORM.filter((pattern) => pattern.test(text)).map(String);
 }
 
-describe("A's role module", () => {
-  it("touches none of the platform's request, socket or object types", () => {
-    const files = readdirSync(join(ROOT, 'src/server-role')).filter((file) => file.endsWith('.ts'));
-    expect(files.length).toBeGreaterThan(0);
-    expect(Object.fromEntries(files.map((file) => [file, platformUses(`src/server-role/${file}`)]))).toEqual(
-      Object.fromEntries(files.map((file) => [file, []])),
-    );
+describe("A's and B's role modules", () => {
+  it("touch none of the platform's request, socket or object types", () => {
+    const files = roleFiles();
+    expect(files).toEqual(expect.arrayContaining(['src/server-role/server-role.ts', 'src/gateway-role/gateway-role.ts']));
+    expect(Object.fromEntries(files.map((file) => [file, platformUses(file)]))).toEqual(Object.fromEntries(files.map((file) => [file, []])));
   });
 
-  it('imports only other role modules, the JSON-RPC core, the types and their schemas', () => {
-    const files = readdirSync(join(ROOT, 'src/server-role')).filter((file) => file.endsWith('.ts'));
-    const stray = files.flatMap((file) => importsOf(`src/server-role/${file}`).filter((spec) => !ROLE_IMPORTS.some((allowed) => allowed.test(spec))).map((spec) => `${file}: ${spec}`));
+  it('import only other role modules, the JSON-RPC core, Standard Webhooks, the types and their schemas', () => {
+    const stray = roleFiles().flatMap((file) => importsOf(file).filter((spec) => !ROLE_IMPORTS.some((allowed) => allowed.test(spec))).map((spec) => `${file}: ${spec}`));
     expect(stray).toEqual([]);
     // The same rule finds the transport's own imports, which reach the platform.
     expect(importsOf('src/server.ts').filter((spec) => !ROLE_IMPORTS.some((allowed) => allowed.test(spec)))).toContain('cloudflare:workers');

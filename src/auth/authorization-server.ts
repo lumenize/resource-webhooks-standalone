@@ -181,6 +181,12 @@ export class AuthorizationServer {
     );
   }
 
+  /** Forgets the registration counts and redeemed codes, as a Wipe does. The epoch voids the rest. */
+  clear(): void {
+    this.#sql.exec('DELETE FROM Registrations');
+    this.#sql.exec('DELETE FROM RedeemedCodes');
+  }
+
   async #clientSecret(clientId: string): Promise<string> {
     return mac(this.#options.secret, 'client-secret', clientId);
   }

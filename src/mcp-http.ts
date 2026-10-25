@@ -20,11 +20,25 @@ const MCP_NAME_SOURCES: ReadonlyMap<string, 'name' | 'uri'> = new Map([
   ['tools/call', 'name'],
   ['resources/read', 'uri'],
   ['prompts/get', 'name'],
+  // SEP-3415 names the event type in Mcp-Name, as tools/call names the tool.
+  ['events/subscribe', 'name'],
+  ['events/unsubscribe', 'name'],
+  ['events/poll', 'name'],
+  ['events/stream', 'name'],
 ]);
 
 const BASE64_SENTINEL = /^=\?base64\?(.*)\?=$/;
 
-export async function serveMcp(request: Request, role: ServerRole): Promise<Response> {
+/** What A reports of each exchange on its endpoint, for the page to show. */
+export type ExchangeReport = { kind: 'mcp'; method: string; params?: unknown; result?: unknown; error?: unknown };
+
+/** Answers one POST to A's MCP endpoint, as the principal the edge verified, if any. */
+export async function serveMcp(
+  request: Request,
+  role: ServerRole,
+  principal: string | undefined,
+  report?: (report: ExchangeReport) => void,
+): Promise<Response> {
   const bytes = await readCapped(request.body);
   if (!bytes) return new Response('Content Too Large', { status: 413 });
 
@@ -45,11 +59,15 @@ export async function serveMcp(request: Request, role: ServerRole): Promise<Resp
     requireEnvelope(classified.message);
     requireMatchingHeaders(request.headers, classified.message);
     requireSupportedVersion(classified.message);
-    const result = role.handle(classified.message);
+    const result = await role.handle(classified.message, principal);
+    report?.({ kind: 'mcp', method: classified.message.method, params: classified.message.params, result });
     return Response.json({ jsonrpc: JSONRPC_VERSION, id, result });
   } catch (error) {
     if (!(error instanceof JsonRpcError)) console.error('MCP request failed', { error });
-    return answerError(id, asJsonRpcError(error));
+    const answered = asJsonRpcError(error);
+    const method = (body as { method?: unknown } | null)?.method;
+    if (typeof method === 'string') report?.({ kind: 'mcp', method, error: { code: answered.code, message: answered.message } });
+    return answerError(id, answered);
   }
 }
 

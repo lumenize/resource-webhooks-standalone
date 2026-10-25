@@ -108,7 +108,14 @@ These notes are for the design's second level, resource state sync. The first le
 
 ## Findings
 
-What building the prototype teaches, one entry for each item of the master plan's § *What building it should teach us*, filled in as the build answers them. The PR's proposal carries them. None yet.
+What building the prototype teaches, one entry for each item of the master plan's § *What building it should teach us*, filled in as the build answers them. The PR's proposal carries them.
+
+- **Sri's Events suites, run against level 1 on 2026-10-25, as a check rather than a gate.** `conformance` #521 at `23c7c2d2f8` grades a server and #541 at `095a156277` a client. Both grade SEP-3415 at `2ec39b9c`, of 2026-10-16, a week before the `b0efd11` that level 1 follows, which separated `webhook-id` from `eventId`. They ran from a checkout, the server suite against the conformance build of A under `wrangler dev`, the client suite against `scripts/conformance-client.mjs`.
+  - **What passed.** Of the server's rows: 11 of the 14 in `events-discovery`, the `Mcp-Name` rows on `events/subscribe`, `Unsupported` for `events/stream` on a type without `push`, and both SSRF rows, since A refuses a loopback callback. Of the client's: every row of `events-client-webhook`, and `events-client-no-extension`.
+  - **Every poll and push row went ungraded,** on the server and the client, since `mcp.resource.updated` is delivered by webhook only. The suite probes `NotFound` for an unknown event name only through `events/poll`, so a server with no polled type is never graded on it, though A answers `events/subscribe` for an unknown name with `-32023` and `data.kind` `event`.
+  - **The `notifications/events/list_changed` rows went ungraded,** since A declares Events with an empty settings object and serves no `subscriptions/listen`.
+  - **All 29 rows of `events-webhook` went ungraded,** and this one is the suite's. It subscribes with callbacks under `https://conformance.invalid`, which no server can reach, and A sends its handshake while it handles `events/subscribe`, as SEP-3415 describes, so every subscribe fails with `CallbackEndpointError`. With the default arguments it fails sooner, since A's `inputSchema` requires a `uri` A holds, and `EVENTS_ARGUMENTS` gets past that. Grading this surface on a server that verifies at subscribe time needs a callback the server can reach.
+  - **All 27 delivery rows of `events-webhook-delivery` went ungraded,** since they need `EVENTS_WEBHOOK_CALLBACK_BASE`, a public `https` URL forwarded to the suite's receiver, which a local run lacks.
 
 ## Withdrawn
 

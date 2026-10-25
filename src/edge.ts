@@ -13,8 +13,8 @@ import {
 } from './vendor/lumenize-routing/route-do-request';
 
 /**
- * The header the edge sets to the claims of a token it verified, as `{"sub":"…","epoch":0}`, and
- * strips from every request, so no caller can set it.
+ * The header the edge sets to the claims of a token it verified, as
+ * `{"sub":"…","epoch":0,"exp":1761400000}`, and strips from every request, so no caller can set it.
  */
 export const CLAIMS_HEADER = 'x-rw-principal';
 
@@ -31,7 +31,21 @@ interface Route {
 const SERVER_ROUTES: readonly Route[] = [
   { path: /^\/mcp$/, methods: ['POST'], token: ['POST'] },
   { path: /^\/(notes|lists)(\/.*)?$/, methods: ['GET', 'HEAD', 'PUT', 'DELETE'], token: ['PUT', 'DELETE'] },
+  // The page's back channel, outside both SEPs. Its reports are open, and its controls carry the
+  // operator token in the message.
+  { path: /^\/page$/, methods: 'websocket' },
 ];
+
+/** Every route the edge lets reach B. A delivery's signature is B's to check, not the edge's. */
+const GATEWAY_ROUTES: readonly Route[] = [
+  { path: /^\/hooks\/[^/]+$/, methods: ['POST'] },
+  { path: /^\/ws\/[^/]+$/, methods: 'websocket' },
+  { path: /^\/page$/, methods: 'websocket' },
+];
+
+/** The subprotocol a client's socket on B speaks. Its token rides beside it, as `rw.token.<token>`. */
+const SUBPROTOCOL = 'rw.1';
+const TOKEN_SUBPROTOCOL = 'rw.token.';
 
 /** The largest body the authorization server's routes take, far more than any of them needs. */
 const AUTHORIZATION_BODY_CAP = 16 * 1024;
@@ -57,10 +71,16 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 
   try {
     const routed = await routeDORequest(request, env, {
-      bindings: ['SERVER'],
+      bindings: ['SERVER', 'GATEWAY'],
       cors,
-      onBeforeRequest: (req, { doInstanceNameOrId }) => requestGuard(req, doInstanceNameOrId, env),
-      onBeforeConnect: (req, { doInstanceNameOrId }) => routeGuard(req, doInstanceNameOrId, env.SERVER_INSTANCE, true),
+      onBeforeRequest: (req, { doInstanceNameOrId }) =>
+        isGateway(req)
+          ? routeGuard(req, doInstanceNameOrId, env.GATEWAY_INSTANCE, false, '/gateway', GATEWAY_ROUTES)
+          : requestGuard(req, doInstanceNameOrId, env),
+      onBeforeConnect: (req, { doInstanceNameOrId }) =>
+        isGateway(req)
+          ? socketGuard(req, doInstanceNameOrId, env)
+          : routeGuard(req, doInstanceNameOrId, env.SERVER_INSTANCE, true, '/server', SERVER_ROUTES),
     });
     return routed ?? notFound();
   } catch (error) {
@@ -116,9 +136,13 @@ function metadataGuard(request: Request): Response | undefined {
     : new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
 }
 
+function isGateway(request: Request): boolean {
+  return new URL(request.url).pathname.startsWith('/gateway/');
+}
+
 // Routes by the table, then checks the token a route needs and passes its claims on to A.
 async function requestGuard(request: Request, instance: string, env: Env): Promise<Response | Request | undefined> {
-  const refused = routeGuard(request, instance, env.SERVER_INSTANCE, false);
+  const refused = routeGuard(request, instance, env.SERVER_INSTANCE, false, '/server', SERVER_ROUTES);
   if (refused) return refused;
   const path = new URL(request.url).pathname.slice(`/server/${instance}`.length);
   const route = SERVER_ROUTES.find((candidate) => candidate.path.test(path) && candidate.methods !== 'websocket');
@@ -130,8 +154,31 @@ async function requestGuard(request: Request, instance: string, env: Env): Promi
   const audience = mcpEndpoint(env.ORIGIN, env.SERVER_INSTANCE);
   const verified = await verifyToken(env.TOKEN_SIGNING_KEY, match[1], audience, Math.floor(Date.now() / 1000));
   if ('error' in verified) return unauthorized(`${challenge}, error="invalid_token", error_description="${verified.error}"`, verified.error);
+  return withClaims(request, verified.claims);
+}
+
+// A client's socket on B needs a token whose audience is that socket's own URL and whose subject
+// is the client the path names. A browser cannot set Authorization on an upgrade, and a query
+// string would reach logs, so the token rides as a subprotocol entry beside SUBPROTOCOL.
+async function socketGuard(request: Request, instance: string, env: Env): Promise<Response | Request | undefined> {
+  const refused = routeGuard(request, instance, env.GATEWAY_INSTANCE, true, '/gateway', GATEWAY_ROUTES);
+  if (refused) return refused;
+  const { pathname } = new URL(request.url);
+  const client = /^\/gateway\/[^/]+\/ws\/([^/]+)$/.exec(pathname)?.[1];
+  if (!client) return undefined;
+  const protocols = (request.headers.get('Sec-WebSocket-Protocol') ?? '').split(',').map((entry) => entry.trim());
+  const token = protocols.find((entry) => entry.startsWith(TOKEN_SUBPROTOCOL))?.slice(TOKEN_SUBPROTOCOL.length);
+  if (!token || !protocols.includes(SUBPROTOCOL)) return new Response('Unauthorized: a token is required', { status: 401 });
+  const audience = `${env.ORIGIN}${pathname}`;
+  const verified = await verifyToken(env.TOKEN_SIGNING_KEY, token, audience, Math.floor(Date.now() / 1000));
+  if ('error' in verified) return new Response(`Unauthorized: ${verified.error}`, { status: 401 });
+  if (verified.claims.sub !== decodeURIComponent(client)) return new Response('Unauthorized: the token is for another client', { status: 401 });
+  return withClaims(request, verified.claims);
+}
+
+function withClaims(request: Request, claims: { sub: string; epoch: number; exp: number }): Request {
   const headers = new Headers(request.headers);
-  headers.set(CLAIMS_HEADER, JSON.stringify({ sub: verified.claims.sub, epoch: verified.claims.epoch }));
+  headers.set(CLAIMS_HEADER, JSON.stringify({ sub: claims.sub, epoch: claims.epoch, exp: claims.exp }));
   return new Request(request, { headers });
 }
 
@@ -141,13 +188,15 @@ function routeGuard(
   instance: string,
   allowedInstance: string,
   websocket: boolean,
+  base: '/server' | '/gateway',
+  table: readonly Route[],
 ): Response | undefined {
   if (instance !== allowedInstance) return notFound();
-  const root = `/server/${instance}`;
+  const root = `${base}/${instance}`;
   const { pathname } = new URL(request.url);
   if (!pathname.startsWith(`${root}/`)) return notFound();
   const path = pathname.slice(root.length);
-  const routes = SERVER_ROUTES.filter((route) => route.path.test(path) && (route.methods === 'websocket') === websocket);
+  const routes = table.filter((route) => route.path.test(path) && (route.methods === 'websocket') === websocket);
   if (routes.length === 0) return notFound();
   if (websocket) return undefined;
   const methods = routes.flatMap((route) => route.methods as readonly string[]);

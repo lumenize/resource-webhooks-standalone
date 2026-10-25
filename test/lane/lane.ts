@@ -1,20 +1,30 @@
 // Each test's own A. Storage is shared within a test file, so a test gets an instance name no
 // other test uses, given to the Worker through the binding that names the instance it routes.
+// B is the file's one gateway, named by GATEWAY_INSTANCE, since A's object reads that name from
+// its own env, which a test cannot vary. Each test's clients are its own registrations, so their
+// sockets on B never meet another test's.
 import { env } from 'cloudflare:workers';
 import { createMcpClient, OAuthSession, type McpClient } from '../../src/client/mcp-client';
 import worker from '../../src/index';
 
-// Every lane's env, by A's instance name, so a fetch arriving after its test has ended still
-// reaches that test's A and never the next one's.
+// Every lane's env, by its A's instance name, so a fetch arriving after its test has ended, as a
+// late retry does, still reaches that test's A and never the next one's.
 const lanes = new Map<string, Env>();
 
-/** The env of the lane whose A a request names, from its `/server/{name}` segment. */
+/** The env of the lane whose A a request names, from its `/server/{name}`, or the file's for B. */
 export function laneEnvFor(request: Request): Env {
   const [, binding, name] = new URL(request.url).pathname.split('/');
+  if (binding === 'gateway' && name === env.GATEWAY_INSTANCE) return env;
   const laneEnv = binding === 'server' ? lanes.get(name) : undefined;
   if (!laneEnv) throw new Error(`No lane is listening at ${request.url}`);
   return laneEnv;
 }
+
+/**
+ * Receivers the fetch spy answers with instead of the network, by origin, as
+ * `https://fault.example`: a test's stand-in for a callback endpoint that misbehaves.
+ */
+export const fakeReceivers = new Map<string, (request: Request) => Promise<Response> | Response>();
 
 /** Calls the Worker's real handler with a lane's env, as a request from outside would. */
 export function callWorker(request: Request, laneEnv: Env): Promise<Response> {
@@ -25,6 +35,8 @@ export function callWorker(request: Request, laneEnv: Env): Promise<Response> {
 export interface Lane {
   /** A's instance name in this test, as `A-1f2e3d4c`. */
   name: string;
+  /** B's instance name, `B`, the same for every test in a file. */
+  gateway: string;
   /** A's own URI, as `https://….workers.dev/server/A-1f2e3d4c`. */
   root: string;
   env: Env;
@@ -43,7 +55,9 @@ export interface Lane {
 }
 
 export function newLane(): Lane {
-  const name = `A-${crypto.randomUUID().slice(0, 8)}`;
+  const suffix = crypto.randomUUID().slice(0, 8);
+  const name = `A-${suffix}`;
+  const gateway = env.GATEWAY_INSTANCE;
   const laneEnv: Env = { ...env, SERVER_INSTANCE: name };
   lanes.set(name, laneEnv);
   const root = `${env.ORIGIN}/server/${name}`;
@@ -53,6 +67,7 @@ export function newLane(): Lane {
   const token = () => session.tokenFor(endpoint);
   return {
     name,
+    gateway,
     root,
     env: laneEnv,
     stub: env.SERVER.getByName(name),
