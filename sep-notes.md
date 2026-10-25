@@ -88,7 +88,7 @@ Everything else in R17 is a substitution: this extension's methods, key and body
 
 ## Pending
 
-- **The extension's names:** Q3.
+- **The methods' prefix.** `resources/` belongs to the core specification, so the PR asks the working group whether an extension's methods want a prefix of their own.
 - **The `_meta` key** under which `resources/read` carries the version of a resource without an `https` URI, to be agreed with the Filesystems working group, with the Transports working group's Definition Tags in view.
 - **The `patch` form's rules,** written in its phase.
 - **Two gaps inherited from SEP-3415:** which base64 alphabet the secret uses, and whether a result should also return the granted TTL, since `refreshBefore` is a clock time and a client's clock can be skewed.

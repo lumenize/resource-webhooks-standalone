@@ -1,6 +1,6 @@
 # Resource webhooks, standalone
 
-**Status:** Pass 1 draft, revised 2026-10-23. Stage 1 review ran on 2026-10-23, and the decisions it raised wait on Larry. Then comes the mining pass over the predecessor, then Pass 2's phases. The requirements level 2 implies are numbered in [sep-notes.md](../sep-notes.md).
+**Status:** Pass 1 draft, revised 2026-10-25. Stage 1 ran on 2026-10-23, and Larry settled its decisions by 2026-10-25. A fresh Stage 1 pass comes next, then the mining pass over the predecessor, then Pass 2's phases. The requirements level 2 implies are numbered in [sep-notes.md](../sep-notes.md).
 
 ## Objective
 
@@ -54,7 +54,9 @@ The sections that follow say what makes this worth building, then show the first
 
 ## Relationships
 
-- **Gated by nothing.** The prototype and its notes can proceed now.
+- **Gated by nothing outside this repo.** The prototype and its notes can proceed now.
+- **Before the PR, the prototype builds every phase, in this order:** level 1; level 2 for one `https` resource; collections; the `patch` form; resources without an `https` URI. That keeps the Objective's promise to take on what an implementation teaches rather than defer it.
+- **Pass 2 waits on the mining pass,** which settles from the predecessor the test oracle (the conformance framework), the validator (`@cfworker/json-schema`, on JSON Schema generated from the spec's TypeScript), the JSON-RPC core (`json-rpc-mixin`), the transport headers (`Mcp-Method` and `Mcp-Name`) and the `patch` rules.
 - **Gates the PR** to `modelcontextprotocol/experimental-ext-triggers-events`, from the fork in `../experimental-ext-triggers-events` on its `resource-webhooks` branch.
 - **Gates the official-SDK reference implementation,** in `../mcp-typescript-sdk`.
 - **Gates the comparison** with the flavors that extend or amend Events.
@@ -286,6 +288,8 @@ A resource is state, and a watcher wants to hold its newest version, not to witn
 
 #### Scenario 3: a first subscription, from nothing
 
+*In sep-notes.md: R5, R8, R22 and R24.*
+
 At 15:00, after the Wipe, `a` writes note-42 again, as `v1`. The examples' versions restart at `v1`, while A's real ones carry the Wipe's epoch and never repeat. `b` connects to B at `wss://.../gateway/B/ws/b`, registers a secret, and subscribes in the `full` form, holding nothing:
 
 ```jsonc
@@ -321,6 +325,8 @@ Before answering, A verifies that the webhook URL wants deliveries, by SEP-3415'
 
 #### Scenario 4: a change it hears about
 
+*In sep-notes.md: R10, R14, R15 and R30.*
+
 At 15:05, `a` marks the note done, making `v2`. A POSTs to B:
 
 ```http
@@ -344,6 +350,8 @@ B verifies the signature, passes the body down `b`'s socket as it was, then answ
 
 #### Scenario 5: a refresh before the grant runs out
 
+*In sep-notes.md: R6 and R15.*
+
 A refresh is the same subscribe call, made again with the same `uri` and `delivery.url`. SEP-3415 asks a subscriber to make it before `refreshBefore`, and the grant then starts again. It may also change the form and rotate the secret. `b` names the version it holds:
 
 ```jsonc
@@ -361,6 +369,8 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
 - **A subscriber may refresh whenever it suspects it missed something,** not only when a grant is running out. `b` refreshes every subscription when it reconnects to B.
 
 #### Scenario 6: changes it never sees
+
+*In sep-notes.md: R12 and R13.*
 
 `b`'s laptop sleeps and its socket to B closes, so B answers `503` for it, while `a` makes two edits:
 
@@ -386,6 +396,8 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
 - **`contents` has the shape of `resources/read`'s result,** so the code that applies a read applies a delivery.
 
 #### Scenario 7: an absence longer than the retries
+
+*In sep-notes.md: R8 and R31.*
 
 `b`'s laptop sleeps again. At 15:40, `a` edits the note once more, making `v5`, and by about 15:55 A's retries have run out. When `b` wakes at 16:05, inside its grant, it reconnects to B, registers its secret again, and refreshes, naming the version it still holds:
 
@@ -419,6 +431,8 @@ What each answer means is SEP-3415's. This extension adds two things: a body too
 
 #### Scenario 8: a deletion
 
+*In sep-notes.md: R11.*
+
 `a` deletes note-42, through `delete_note`. A delivers, and B passes on:
 
 ```jsonc
@@ -447,6 +461,8 @@ So a subscription names one of three targets:
 
 ##### Scenario 9: a folder
 
+*In sep-notes.md: R18 and R32.*
+
 At 16:10, `b` subscribes to A's inbox in the `notify` form, holding none of it yet:
 
 ```jsonc
@@ -470,6 +486,8 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
 - **A subscription from nothing names no cursor,** and its result lists every member that exists, at its newest version.
 
 ##### Scenario 10: catching up a folder
+
+*In sep-notes.md: R32 to R36.*
 
 `b` holds note-43 at `v1`, and its last result named cursor `c1`. `b`'s laptop sleeps from 16:20. Meanwhile `a` edits note-43 twice, creates note-44, and then deletes note-43, and A's retries run out. At 16:50, inside its grant, `b` refreshes, naming the cursor:
 
@@ -585,7 +603,7 @@ type ResourceChange = { uri: string } & (
   - **The body.** A `ResourceChange` takes the place of an `EventOccurrence`.
   - **The retry model.** Only the newest version of each URI is retried, with pending versions coalesced, where SEP-3415 retries each event on its own.
   - **No replay, no `gap` envelope and no `truncated` for one resource.** The version a subscriber names on each refresh does their work. A collection's catch-up uses this extension's own cursor (§ *Collections*).
-- **Its error codes, reused as SEP-3415 intends.** It calls its five new codes general-purpose, "named for reuse across MCP and are not scoped to events". So this extension answers an undeclared form with `Unsupported`, a refused principal with `Forbidden`, an unsubscribe that matches nothing with `NotFound`, a server limit with `ResourceExhausted`, and a callback that fails verification with `CallbackEndpointError`. An unknown URI is refused with `-32602`, as `resources/read` refuses it.
+- **Its error codes, reused as SEP-3415 intends.** It calls its five new codes general-purpose, "named for reuse across MCP and are not scoped to events". So this extension answers an undeclared form with `Unsupported`, a refused principal with `Forbidden`, an unsubscribe that matches nothing with `NotFound`, a server limit with `ResourceExhausted`, and a callback that fails verification with `CallbackEndpointError`. SEP-3415's Open Question 7 asks whether these become new codes at all, and this extension follows its answer. An unknown URI is refused with `-32602`, as `resources/read` refuses it.
 - **Not used:** `events/list`, `events/poll` and `events/stream`. Level 1 uses Events' methods, and level 2 uses its own.
 
 ### What building it should teach us
@@ -621,9 +639,7 @@ type ResourceChange = { uri: string } & (
 
 ## Open questions
 
-3. **Q3. What are the names?** The extension identifier `io.modelcontextprotocol/resource-webhooks`, the methods `resources/webhooks/subscribe` and `resources/webhooks/unsubscribe`, and the target `listed`.
-   - **The methods' prefix:** `resources/` belongs to the core specification, and an extension may need a prefix of its own, as SEP-3415 reserves `events/`.
-   - **Recommendation:** keep these names, and ask about the prefix in the PR.
+None now. The last ones, how a collection catches up, how its catch-up pages, and the names, are rows in § *Decisions*.
 
 ## Decisions
 
@@ -644,6 +660,7 @@ type ResourceChange = { uri: string } & (
 | Collections are in scope: a folder, a URI template, or every listed resource (Larry, 2026-10-20) | Deferring them: they raise the questions only an implementation answers, which is what a prototype is for. |
 | A collection's refresh returns each member changed since the cursor of the subscriber's last result, once, at its newest version, deletions included. Only results carry the cursor, and one A can no longer serve gets every member, marked `reset` (Larry, 2026-10-25) | The whole member list on every catch-up: as big as the collection each time. A log of events to replay: a client needs each member's newest version, not the steps. Versions that must sort, as Kubernetes' `resourceVersion` does: an `https` resource's version is its `ETag`, which nothing can require to sort, though a server MAY use one value for both (R36). A cursor in each delivery: it would need a watermark. HTTP `410` for a stale cursor: SEP-3415 gives a receiver's `410` its own meaning. |
 | A long catch-up pages with its cursor and `hasMore`, as `events/poll` does, and a reset pages the same way (Larry, 2026-10-25) | A second cursor for a reset's pages, as `resources/list` pages: two fields where one opaque value serves. |
+| The names are the extension identifier `io.modelcontextprotocol/resource-webhooks`, the methods `resources/webhooks/subscribe` and `resources/webhooks/unsubscribe`, and the target `listed`, and the PR asks whether the methods want a prefix of their own (2026-10-25) | A prefix of the extension's own, as SEP-3371's example names a method `com.example/search` after its extension: SDKs match method names exactly, so nothing requires one, while `resources/` belongs to the core specification, which is why the PR asks. |
 | Subscribing requires an authenticated principal, as SEP-3415 does, from MCP's OAuth flow with an authorization server that verifies no identity, as Peter's reference server has (Larry, 2026-10-20) | Anonymous callers sharing one principal: any of them could unsubscribe another or replace its secret. A login endpoint handing out a random token: the same idea outside the OAuth flow every MCP client already speaks. Requiring the old secret to unsubscribe or rotate: a client that lost its secret could only wait out the TTL, and the secret, held by gateways, would become a credential. |
 | Endpoint verification is cached per `(principal, delivery.url, delivery.secret)` (Larry, 2026-10-20) | Per `(principal, url)`, as SEP-3415 does: a principal that verified a webhook URL once could subscribe it again with a secret the receiver never held, and flood it. Per `(url, secret)` alone: two principals holding one secret would share a verification, which SEP-3415 rules out. |
 | The server stores no per-subscription record of the version each subscriber acknowledged, and a patch starts from the resource's previous version (Larry, 2026-10-21) | Recording acknowledgements: on a Durable Object, one change watched by 1000 subscriptions would cost 1000 writes instead of one, writes being the most expensive operation, while a refresh on reconnect repairs a miss. No service that syncs state over webhooks records a delivery position per subscriber either. |
