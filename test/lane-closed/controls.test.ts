@@ -3,7 +3,7 @@
 // so one that sets OPERATOR_TOKEN fails the first assertion rather than passing this test open.
 import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
-import { watch } from '../lane/b';
+import { watch } from '../client/parties';
 import { newLane } from '../lane/lane';
 
 it('refuses every control on A and on B when the operator-token binding is absent', async () => {

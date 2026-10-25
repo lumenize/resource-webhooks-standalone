@@ -16,6 +16,7 @@
     "generate:schema": "node scripts/generate-schemas.mjs",
     "check:schema": "node scripts/generate-schemas.mjs --check",
     "conformance": "node scripts/conformance.mjs",
+    "deployed": "node scripts/deployed.mjs",
     "conformance:client": "npx --yes @modelcontextprotocol/conformance@0.2.0-alpha.12 client --command \"node scripts/conformance-client.mjs\" --requirements 2026-07-28 --expected-failures ./conformance-baseline.yml"
   },
   "dependencies": {

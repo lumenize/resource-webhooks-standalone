@@ -42,5 +42,7 @@
     // How often a client pings B on its socket. B treats a socket two intervals quiet as closed.
     "HEARTBEAT_MS": "30000"
   },
+  // The version each object runs, which it tells the page, since a deploy reaches each object late.
+  "version_metadata": { "binding": "VERSION" },
   "observability": { "enabled": true }
 }

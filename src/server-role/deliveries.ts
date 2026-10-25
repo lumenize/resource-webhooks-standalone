@@ -14,14 +14,29 @@ import { constantTimeEqual, deliveryHeaders } from '../standard-webhooks';
  */
 export type Send = (url: string, headers: Record<string, string>, body: string, readAnswer: boolean) => Promise<SendResult>;
 
-export type SendResult = { status: number; body?: string } | { failure: 'timeout' | 'connection_refused' };
+export type SendResult =
+  | {
+      status: number;
+      body?: string;
+      /** The code of a refusal by the host's own network before the request left it, as Cloudflare's 1016. */
+      refusal?: number;
+    }
+  | { failure: 'timeout' | 'connection_refused' };
 
 /** The most of a challenge's answer A reads, since anyone can name the URL that answers it. */
 export const MAX_ANSWER_BYTES = 4096;
 
 /** What the host reports to the page, which never sees a secret or a signature. */
 export type DeliveryReport =
-  | { kind: 'verification'; url: string; outcome: 'verified' | 'failed' | 'cached' }
+  | {
+      kind: 'verification';
+      url: string;
+      outcome: 'verified' | 'failed' | 'cached';
+      /** How the challenge was answered, or why it was not, so the page can show why it failed. */
+      status?: number;
+      refusal?: number;
+      failure?: string;
+    }
   | { kind: 'attempt'; url: string; webhookId: string; attempt: number; outcome: string };
 
 export interface DeliveriesOptions {
@@ -109,7 +124,7 @@ export class Deliveries {
     const generation = this.#generation;
     const result = await this.#options.send(url, headers, body, true);
     if ('failure' in result) {
-      this.#options.report?.({ kind: 'verification', url, outcome: 'failed' });
+      this.#options.report?.({ kind: 'verification', url, outcome: 'failed', failure: result.failure });
       throw new JsonRpcError(CALLBACK_ENDPOINT_ERROR, 'The callback endpoint could not be reached', { reason: result.failure });
     }
     let echoed: unknown;
@@ -119,7 +134,7 @@ export class Deliveries {
       echoed = undefined;
     }
     const ok = result.status >= 200 && result.status < 300 && typeof echoed === 'string' && constantTimeEqual(echoed, challenge);
-    this.#options.report?.({ kind: 'verification', url, outcome: ok ? 'verified' : 'failed' });
+    this.#options.report?.({ kind: 'verification', url, outcome: ok ? 'verified' : 'failed', status: result.status, refusal: result.refusal });
     if (!ok) throw new JsonRpcError(CALLBACK_ENDPOINT_ERROR, 'The callback endpoint did not echo the challenge', { reason: 'challenge_failed' });
     // A Wipe while the challenge was out forgets everything, this handshake included.
     if (generation === this.#generation) this.#verified.set(key, Date.now() + this.#options.verificationTtlMs);

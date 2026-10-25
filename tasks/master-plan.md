@@ -884,7 +884,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
      - Two Wipes in a row each raise the epoch, a version minted after a Wipe differs from every version before it, and a retry pending at a Wipe never reaches B after it. Mutation: delete storage without clearing the queue.
      - Sri's suites run against level 1, and `sep-notes.md` § *Findings* records which of their rows they could not grade, and why. Mutation: none; this records rather than gates.
 5. **A deployed tier.** This grounds the claims that hold only on Cloudflare, as `.claude/rules/testing.md` asks.
-   - **Builds:** a deploy of the `test-*` Worker with real tokens and no conformance bypass, the one client the phases' preamble names, which phase 4's helpers in `test/lane/b.ts` become, and a script that runs phase 4's scenario tests against the deployed Worker through it. Each later phase adds its scenario tests to that run.
+   - **Builds:** a deploy of the `test-*` Worker with real tokens and no conformance bypass, the one client the phases' preamble names, in `test/client/parties.ts`, and a script that runs phase 4's scenario tests against the deployed Worker through it. Each later phase adds its scenario tests to that run.
    - **Success criteria:**
      - Level 1's scenario tests pass against the deployed Worker. Mutation: deploy with a broken signer.
      - The SSRF measurement reruns over `https` through A's own delivery path, subscribing with `delivery.url` at sslip.io and nip.io names. Each address gets the code `sep-notes.md` records, Google's address through both services is reached in the same run, the three addresses that time out do so, and a rebinding service that takes a nonce forces a fresh resolution on every fetch. Mutation: list the public control among the refused, once, to see the test fail.
@@ -1099,3 +1099,27 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 
 - **Phase 3's pointer to the token bucket and the subscription cap is closed for level 1:** both are built and tested here. Phase 6 still owns the cap for its own methods.
 - **Scenario 2's listing now carries `"additionalProperties": false`,** as A's descriptor does, so A refuses an argument other than `uri`.
+
+### Phase 5
+
+**For Larry.**
+
+- **Two Workers are deployed on the Lumenize and Transformation.dev account:** `test-resource-webhooks-standalone`, the deployed tier, and `test-resource-webhooks-noflag`, deployed once without `global_fetch_strictly_public` for its measurement. Their secrets are random, made by `scripts/deployed.mjs` into `.deployed.vars`, which git ignores.
+- **Cloudflare's egress refused every special-purpose address through A's own path,** with the codes of the first run, and rebinding found nothing to exploit. `sep-notes.md` records each address's code.
+- **Error 1042 did not happen.** A deploy without `global_fetch_strictly_public` still delivered A's POST to B on its own `workers.dev` host, against Cloudflare's docs. The flag stays, so a delivery to B goes out like one to any receiver.
+
+**Retro.**
+
+- **The one client is `test/client/parties.ts`.** It speaks only HTTP and WebSocket to a `Tier`, the plan's word for the lane or the deployed Worker, since `Target` already names something in `src`. The lane is one tier, `test/deployed/tier.ts`, over Node's own `fetch` and `WebSocket`, is the other, and Scenario 2 lives in `test/scenarios/level1.ts`, which both run. A refused upgrade's status stays a lane-only helper, since a WebSocket hides it.
+- **A's verification reports now carry the challenge's status, Cloudflare's refusal code, or the failure,** so the SSRF rerun reads each address's code off A's back channel. The page is open, but on Cloudflare A reaches nothing a watcher could not reach directly, so the statuses tell a watcher nothing new. A host without such egress would have to reconsider.
+- **The broken-signer mutation has to break A's side only.** A's signer and B's verifier share `sign()`, so breaking it breaks both alike, and the mutation shifts the timestamp A signs in `deliveryHeaders` instead.
+- **A deploy reaches a busy Durable Object late.** Cloudflare releases a deploy to objects eventually, so the script waits until A and B greet a page with the new version, which a `version_metadata` binding gives them, before it runs anything. Polled every 5 seconds, both kept the previous version for 300 seconds, twice. Polled every 30 seconds, both switched by the second check, at 31 seconds, twice. So an object that keeps getting requests a few seconds apart keeps answering on the previous version, apparently up to five minutes, and the script polls every 30 seconds. Before the wait, a mutation's deploy was still answering after its restore was deployed, and one deployed run tested the wrong code.
+- **Vitest prints nothing of a passing test,** so the two measuring tests write their outcomes to `results/`, which git ignores.
+- **The race B's acknowledgement guards against did not happen in eight runs on Cloudflare,** with the wait left out.
+- **Four mutations, all caught:** a broken signer, deployed, fails Scenario 2, before and after the wait existed; Google listed among the refused fails the SSRF test; A dropping Cloudflare's refusal code, deployed, fails it too; and no greeting fails the lane's test of it.
+- **The full suite passes, 262 tests, one more than phase 4 left,** both conformance gates still exit 0, and the deployed tier passes its three tests on a fresh deploy.
+
+**Close-out.**
+
+- **Phase 4's hand-off of the one client is closed.** The preamble's bullet now says phase 5 builds it, and it is built.
+- **The egress memory and `sep-notes.md` § *Taken from SEP-3415 by reference* now carry the https run,** and the open questions both had, about A's own path, rebinding and error 1042, are answered.

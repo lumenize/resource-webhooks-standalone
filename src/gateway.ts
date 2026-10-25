@@ -44,7 +44,7 @@ export class Gateway extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const name = this.ctx.id.name!;
     const path = new URL(request.url).pathname.slice(`/gateway/${name}`.length);
-    if (path === '/page') return acceptPage(this.ctx);
+    if (path === '/page') return acceptPage(this.ctx, 'B', this.env.VERSION);
     const socket = /^\/ws\/([^/]+)$/.exec(path);
     if (socket) return await this.#acceptClient(socket[1], request);
     const hook = /^\/hooks\/([^/]+)$/.exec(path);

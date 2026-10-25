@@ -33,6 +33,10 @@ export default defineConfig({
       lane('lane', ['test/lane/**/*.test.ts'], { ...BINDINGS, OPERATOR_TOKEN: 'test-operator-token-for-the-lane-only' }),
       // The same, with no operator-token binding at all, as a Worker deployed without the secret.
       lane('lane-closed', ['test/lane-closed/**/*.test.ts'], BINDINGS),
+      // The deployed tier, over the network, only when scripts/deployed.mjs has deployed one.
+      ...(process.env.DEPLOYED_ORIGIN
+        ? [{ test: { name: 'deployed', environment: 'node', include: ['test/deployed/**/*.test.ts'], testTimeout: 120_000, hookTimeout: 120_000 } }]
+        : []),
       // Node tests: the Worker under wrangler's test harness, with its static assets, and the
       // repo's own scripts.
       {

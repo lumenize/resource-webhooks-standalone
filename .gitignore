@@ -3,6 +3,7 @@ dist
 coverage
 .wrangler
 .dev.vars
+.deployed.vars
 *.log
 *.tsbuildinfo
 .DS_Store

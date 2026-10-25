@@ -30,5 +30,6 @@
     "VERIFICATION_BURST": "10",
     "HEARTBEAT_MS": "30000"
   },
+  "version_metadata": { "binding": "VERSION" },
   "dev": { "port": 8788, "ip": "localhost" }
 }

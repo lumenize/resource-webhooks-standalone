@@ -40,7 +40,10 @@ export class Server extends DurableObject<Env> {
           return { status: response.status };
         }
         const answer = await readCapped(response.body, MAX_ANSWER_BYTES);
-        return { status: response.status, body: answer ? new TextDecoder().decode(answer) : '' };
+        const text = answer ? new TextDecoder().decode(answer) : '';
+        // Cloudflare answers a fetch it will not make, to a private address say, with its own page.
+        const refusal = response.headers.get('server') === 'cloudflare' ? /^error code: (\d+)/.exec(text)?.[1] : undefined;
+        return { status: response.status, body: text, ...(refusal ? { refusal: Number(refusal) } : {}) };
       } catch (error) {
         return { failure: (error as Error).name === 'TimeoutError' ? 'timeout' : 'connection_refused' };
       }
@@ -80,7 +83,7 @@ export class Server extends DurableObject<Env> {
         return this.#authorization.token(request);
     }
     const path = url.pathname.slice(this.#base.length);
-    if (path === '/page') return acceptPage(this.ctx);
+    if (path === '/page') return acceptPage(this.ctx, 'A', this.env.VERSION);
     const needsToken = path === '/mcp' || request.method === 'PUT' || request.method === 'DELETE';
     let claims: Claims | undefined;
     if (needsToken) {

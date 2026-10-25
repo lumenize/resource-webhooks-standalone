@@ -9,10 +9,10 @@ import { Webhook } from 'standardwebhooks';
 import { describe, expect, it, vi } from 'vitest';
 import { signToken } from '../../src/auth/signing';
 import { McpError } from '../../src/client/mcp-client';
-import { SERVER_INFO } from '../../src/server-role/server-role';
 import { deliveryHeaders, newSecret, verify } from '../../src/standard-webhooks';
-import { hookUrl, listen, signedIn, socketUrl, subscribe, upgrade, watch, type Page, type Party } from './b';
-import { callWorker, newLane, type Lane } from './lane';
+import { hookUrl, listen, signedIn, socketUrl, subscribe, watch, write, type Page } from '../client/parties';
+import { scenario2 } from '../scenarios/level1';
+import { callWorker, newLane, upgrade, type Lane } from './lane';
 import { echo, receiver, type Received } from './receiver';
 
 const CALLBACK_ENDPOINT_ERROR = -32027;
@@ -23,11 +23,6 @@ const delays = env.RETRY_SCHEDULE_MS.split(',').map(Number);
 const scheduleMs = delays.reduce((sum, delay) => sum + delay, 0);
 // Every attempt the lane's schedule makes, as `[attempt, outcome]`.
 const every = (outcome: string) => Array.from({ length: delays.length + 1 }, (_each, index): [number, string] => [index + 1, outcome]);
-
-async function write(party: Party, uri: string, title = 'Buy milk'): Promise<string> {
-  const result = await party.client.request('tools/call', { name: 'write_note', arguments: { uri, note: { title, done: false } } });
-  return (result.structuredContent as { version: string }).version;
-}
 
 async function refusal(promise: Promise<unknown>): Promise<{ code: number; data?: unknown }> {
   const error = await promise.then(() => undefined, (caught: unknown) => caught);
@@ -80,70 +75,7 @@ async function withMovableClock<T>(body: () => Promise<T>): Promise<T> {
 const BODY = JSON.stringify({ eventId: 'evt_e0.1', name: 'mcp.resource.updated', timestamp: '2026-10-21T14:05:00Z', data: { uri: 'x' }, cursor: null });
 
 describe('Scenario 2: mcp.resource.updated over Events', () => {
-  it('lists the type, subscribes after the handshake, delivers an occurrence for a write, and reports it all redacted', async () => {
-    const lane = newLane();
-    const pageA = await watch(lane, 'A');
-    const pageB = await watch(lane, 'B');
-    const a = await signedIn(lane, 'a');
-    const b = await signedIn(lane, 'b');
-    const uri = `${lane.root}/notes/inbox/note-42`;
-
-    expect(await b.client.request('events/list')).toEqual({
-      resultType: 'complete',
-      events: [
-        {
-          name: 'mcp.resource.updated',
-          description: 'A resource changed',
-          delivery: ['webhook'],
-          inputSchema: { type: 'object', required: ['uri'], properties: { uri: { type: 'string' } }, additionalProperties: false },
-          payloadSchema: { type: 'object', required: ['uri'], properties: { uri: { type: 'string' } } },
-        },
-      ],
-      _meta: { 'io.modelcontextprotocol/serverInfo': SERVER_INFO },
-    });
-
-    const listener = await listen(lane, b);
-    const subscribed = await subscribe(b, uri, listener.hookUrl, listener.secret);
-    expect(subscribed).toEqual({
-      resultType: 'complete',
-      id: expect.stringMatching(/^sub_[0-9a-f]{16}$/),
-      refreshBefore: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
-      cursor: null,
-      truncated: false,
-      _meta: { 'io.modelcontextprotocol/serverInfo': SERVER_INFO },
-    });
-
-    const version = await write(a, uri);
-    await vi.waitFor(() => expect(listener.deliveries()).toHaveLength(1));
-    const [delivery] = listener.deliveries();
-    expect(delivery.subscriptionId).toBe(subscribed.id);
-    expect(delivery.webhookId).toMatch(/^msg_[A-Za-z0-9]{24}$/);
-    expect(delivery.body).toEqual({
-      eventId: `evt_${version}`,
-      name: 'mcp.resource.updated',
-      timestamp: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
-      data: { uri },
-      cursor: null,
-    });
-    // B answered A's challenge before the occurrence reached it.
-    const received = pageB.reports().filter((report) => report.kind === 'delivery' && report.client === b.clientId);
-    expect(received.map((report) => [String(report.webhookId).startsWith('msg_verification_'), report.status])).toEqual([
-      [true, 200],
-      [false, 200],
-    ]);
-    // b then reads the note, as in Scenario 1a.
-    const read = await b.client.request<{ resultType: string; contents: { uri: string; text: string }[] }>('resources/read', { uri });
-    expect(read.contents).toEqual([{ uri, mimeType: 'application/json', text: '{"title":"Buy milk","done":false}' }]);
-
-    // A control passes over the same channel, and nothing secret comes back on either.
-    expect(await pageA.control('schedule', { delaysMs: [2000, 4000, 8000] })).toEqual({ type: 'done', action: 'schedule' });
-    const everything = [...pageA.raw, ...pageB.raw].join('\n');
-    expect(everything).toContain('whsec_…(32 bytes)');
-    expect(everything).not.toMatch(/whsec_[A-Za-z0-9+/]/);
-    expect(everything).not.toMatch(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\./);
-    expect(everything).not.toContain(env.OPERATOR_TOKEN);
-    expect(everything).not.toContain('"control"');
-  });
+  it('lists the type, subscribes after the handshake, delivers an occurrence for a write, and reports it all redacted', () => scenario2(newLane()));
 });
 
 describe('B, the gateway', () => {
@@ -179,7 +111,7 @@ describe('B, the gateway', () => {
     const lane = newLane();
     const b = await signedIn(lane, 'b');
     const url = socketUrl(lane, b.clientId);
-    const response = await upgrade(lane, url, await b.session.tokenForResource(env.ORIGIN, url));
+    const response = await upgrade(lane.env, url, await b.session.tokenForResource(env.ORIGIN, url));
     const socket = response.webSocket!;
     socket.accept();
     const messages: unknown[] = [];
@@ -244,7 +176,7 @@ describe('B, the gateway', () => {
     const url = socketUrl(lane, b.clientId);
     const now = Math.floor(Date.now() / 1000);
     const token = await signToken(env.TOKEN_SIGNING_KEY, { iss: env.ORIGIN, sub: b.clientId, aud: url, iat: now, exp: now + 2, epoch: 0 });
-    const response = await upgrade(lane, url, token);
+    const response = await upgrade(lane.env, url, token);
     expect(response.status).toBe(101);
     const socket = response.webSocket!;
     socket.accept();
@@ -272,7 +204,7 @@ describe('B, the gateway', () => {
         };
       },
     });
-    const watched = { ...lane, env: { ...lane.env, GATEWAY: recording } };
+    const watched = { ...lane.env, GATEWAY: recording };
     const url = socketUrl(lane, b.clientId);
     const now = Math.floor(Date.now() / 1000);
     const mint = (aud: string, exp = now + 60) => signToken(env.TOKEN_SIGNING_KEY, { iss: env.ORIGIN, sub: b.clientId, aud, iat: now, exp, epoch: 0 });
@@ -687,6 +619,16 @@ describe("A's deliveries", () => {
 });
 
 describe("The page's controls", () => {
+  it('greets each page with the version of the code its object runs', async () => {
+    expect(env.VERSION.id).toMatch(/^[0-9a-f-]{8,}$/);
+    const lane = newLane();
+    for (const party of ['A', 'B'] as const) {
+      const page = await watch(lane, party);
+      await vi.waitFor(() => expect(page.raw.length).toBeGreaterThan(0));
+      expect(JSON.parse(page.raw[0])).toEqual({ party, kind: 'hello', version: env.VERSION.id });
+    }
+  });
+
   it('refuses a control with the wrong operator token, and names one it does not know, on A and on B', async () => {
     const lane = newLane();
     for (const party of ['A', 'B'] as const) {
