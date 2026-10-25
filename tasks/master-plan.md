@@ -117,7 +117,7 @@ block-beta
   - **`cors`, naming one allowed origin per environment,** a constant never computed from the request: the deployed Worker's own, `http://localhost` for the conformance suite's local run, and `https://localhost:<port>` for the browser test. A deployed Worker never allows an `http://` origin. A request whose `Origin` is present and not that origin is refused with `403` before any object wakes, as MCP's Streamable HTTP transport requires: servers "MUST validate the `Origin` header on all incoming connections to prevent DNS rebinding attacks". A request with no `Origin`, such as A's webhook POST to B, passes. The check covers B's socket too, since `routeDORequest` runs it before either hook. `applyCorsPolicy` answers a preflight `OPTIONS` from another origin with `204` and no CORS headers, so the Worker, not the vendored copy, turns that into `403` on every route, as the transport requires.
   - **`onBeforeRequest`, checking A's tokens at the edge,** as § *Who may subscribe* says.
   - **`onBeforeConnect`, checking `b`'s token for B's socket,** as § *The leg between the gateway and its client* says.
-- **One table holds every route, and the edge denies by default.** `onBeforeRequest` and `onBeforeConnect` see every request and every upgrade, so each decides by the path, as the last column says, before any stub is made. A path naming any instance but A under `/server` or B under `/gateway` answers `404`, as does a path and method the table does not list, and a bare `/server` with no instance. After it verifies a token, the edge sets the principal in a claims header, `x-rw-principal`, and strips that header from every request it did not verify. The Worker serves its static assets with `run_worker_first` for every route the table lists, so a browser's navigation to `/authorize` or to a note reaches it. The authorization server's routes are the ones `routeDORequest` does not match, and the Worker hands them to A by hand, after the same `Origin` check, `applyCorsPolicy`, which the copy exports.
+- **One table holds every route, and the edge denies by default.** `onBeforeRequest` and `onBeforeConnect` see every request and every upgrade, so each decides by the path, as the last column says, before any stub is made. A path naming any instance but A under `/server` or B under `/gateway` answers `404`, as does a path and method the table does not list, and a bare `/server` with no instance. After it verifies a token, the edge sets the principal in a claims header, `x-rw-principal`, and strips that header from every request it did not verify. The Worker serves its static assets with no `not_found_handling`, so a browser's navigation to `/authorize` or to a note, which matches no asset, reaches the Worker, where a fallback page would answer it first. The authorization server's routes are the ones `routeDORequest` does not match, and the Worker hands them to A by hand, after the same `Origin` check, `applyCorsPolicy`, which the copy exports.
 
 | Path | Request | Handled by | Needs |
 |---|---|---|---|
@@ -775,23 +775,24 @@ None.
 | A client that receives a delivery while a refresh naming that URI is outstanding refreshes again (R41) (Claude, 2026-10-25, while Larry was away) | Comparable versions: R3 keeps versions opaque. Accepting a stale copy until the next change: Goal 5 promises at most one refresh interval. |
 | Tests check every delivery with the `standardwebhooks` package as an outside verifier (Claude, 2026-10-25, while Larry was away) | Only this repo's own signer and verifier: they could agree on a wrong scheme. |
 | B passes `{subscriptionId, webhookId, body}` down the socket, and `b` drops a repeated `webhook-id` (Claude, 2026-10-25, while Larry was away) | The body alone: `b` could not tell a replayed older change from a new one. |
+| Static assets with no `not_found_handling`, so a navigation that matches no asset reaches the Worker (Claude, 2026-10-25, building phase 1) | `run_worker_first` for the table's routes: with no fallback page configured it changes nothing, so no test could fail for want of it. |
 
 ## Phases
 
 Each phase ends with its criteria passing in the vitest-plugin lane against one local Worker, unless it says otherwise. A phase's tests drive the Worker through its real routes and assert each message value by value, as its scenarios show them, and every criterion names the one change that would make it fail. A test that drops below the public API says why in its comment, as `../lumenize/.claude/rules/testing.md` requires.
 
 **How the tests reach things the lane cannot.** These are pinned in phase 1 and used by every phase after it:
-- **A's POST to B stays inside the lane.** A test-setup spy on `globalThis.fetch` sends a request for the Worker's own origin to `exports.default.fetch` and lets nothing else out, so B's real route, signature check and socket run end to end. Phase 1's first test is a probe that should fail, showing the spy sees a fetch made inside A. If it does not, the fallback is miniflare's `outboundService`. The same handlers serve as the fault receivers, answering `302`, `410`, `413` or `401`, hanging, or holding an answer until the test releases it.
+- **A's POST to B stays inside the lane.** A test-setup spy on `globalThis.fetch` sends a request for the Worker's own origin to the Worker's default handler, called with the running test's env, and lets nothing else out, so B's real route, signature check and socket run end to end. Phase 1's first test is a probe that should fail, showing the spy sees a fetch made inside A. If it does not, the fallback is miniflare's `outboundService`. The same handlers serve as the fault receivers, answering `302`, `410`, `413` or `401`, hanging, or holding an answer until the test releases it.
 - **Time.** Comparisons with the clock (a grant's expiry, the cut-off window, `refreshBefore`) move it with `vi.setSystemTime`. Retries use a schedule set in milliseconds and real timers, waited on with `vi.waitFor`.
 - **Settings.** A test sets A's retry schedule, cut-off window, page size, attempt timeout and limits through miniflare `bindings`, never through the page's controls.
-- **Isolation.** Each test gets A and B of its own, under instance names from a binding, so rows, the counter, subscriptions and in-memory state never carry from one test to the next.
+- **Isolation.** Each test gets A and B of its own, under instance names from a binding: `SERVER_INSTANCE` names the one instance the edge routes, and each test calls the handler with an env naming its own, as `A-1f2e3d4c`. So rows, the counter, subscriptions and in-memory state never carry from one test to the next, though the plugin isolates storage only per file.
 - **Eviction.** `evictDurableObject` stands in for a restart, with `webSockets: "hibernate"` for B. A probe first shows whether eviction waits for A's pending work.
 - **One client for every lane.** From phase 4 on, the scenario tests use a client that takes a base URL and speaks only `fetch` and `WebSocket`, so the same file runs against a deployed Worker in phase 5. Criteria that need the lane's own tools say "local only".
 - **An outside check on signatures.** Every delivery a test captures is checked with the `standardwebhooks` package as well as B, so A's signer and B's verifier cannot agree on a wrong scheme. If the package does not run in workerd, Standard Webhooks' published test vectors take its place.
 
 1. **The Worker, its routing, and A's notes over plain HTTP.** This gives every later phase a running Worker, A's store of versions, and the plain-HTTP baseline of Scenario 1b.
    - **Builds:**
-     - the project: `package.json`, and a `wrangler.jsonc` at compatibility date 2026-10-01 with `global_fetch_strictly_public`. It registers `Server` and `Gateway` under `exports` with `storage: "sqlite"` and no `migrations` array, and serves static assets with `run_worker_first` for every route the table lists. New dependencies, for Larry to approve before the build: `wrangler` 4.147.0, `@cloudflare/vitest-plugin` 1.3.6, `vitest`, `typescript` and `@cfworker/json-schema`, with `typescript-json-schema` and `standardwebhooks` as development tools, and in phase 8 `@vitest/browser-playwright` and Playwright.
+     - the project: `package.json`, and a `wrangler.jsonc` at compatibility date 2026-10-01 with `global_fetch_strictly_public`. It registers `Server` under `exports` with `storage: "sqlite"` and no `migrations` array, and `Gateway` joins it in phase 4, and it serves static assets with no `not_found_handling`. New dependencies, for Larry to approve before the build: `wrangler` 4.147.0, `@cloudflare/vitest-plugin` 1.3.6, `vitest`, `typescript` and `@cfworker/json-schema`, with `typescript-json-schema` and `standardwebhooks` as development tools, and in phase 8 `@vitest/browser-playwright` and Playwright.
      - the vendored `routeDORequest` in `src/vendor/lumenize-routing/`, with `bindings` and `cors`, and the Worker's default-deny edge of § *The cast*
      - A's store of versions, as § *The cast* describes it
      - JSON Schema generated from `Note` and `List` with the spec's own generator and flags, `typescript-json-schema --defaultNumberType integer --required`, the types carrying `@additionalProperties false` so the schemas come out closed. It is committed, with a check that fails when it goes stale.
@@ -806,7 +807,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
      - A body over 1 MiB answers `413`. Mutation: lift the cap.
      - A request from another `Origin` answers `403` on every route, a preflight included, and no `Server` object exists after it. Mutation: let the preflight's `204` through.
      - `GET /server/X/notes/note-1` answers `404`, and `listDurableObjectIds(env.SERVER)` is unchanged. Mutation: route any instance name.
-     - A navigation request for `/authorize` and for a note reaches the Worker, not the asset fallback. Mutation: drop `run_worker_first`.
+     - A navigation request for `/authorize` and for a note reaches the Worker, not the asset fallback, run under wrangler's `createTestHarness`, since the lane serves no assets. Mutation: configure the `single-page-application` fallback.
      - A deletion adds a row marked deleted, and a later `GET` answers `404`. Mutation: delete the row.
      - A folder's `GET` lists its members' URIs and carries no `ETag`, and a write under `inbox2/` is not among `inbox/`'s members. Mutation: match the prefix without its trailing slash.
      - With the cut-off window set short and a deletion older than it, the next write removes old rows, the deletion's among them, but keeps each live resource's newest. Mutation: keep deletion rows.
@@ -851,7 +852,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
    - **Builds:**
      - A's webhook module: Standard Webhooks signing with the subscriber's `whsec_` secret, the verification handshake with a single-use nonce compared in constant time and cached per `(principal, url)` in memory, a token bucket per destination host for verification POSTs, the retry queue in memory under `ctx.waitUntil` with A's schedule clamped to SEP-3415's bounds, an attempt timeout, `redirect: "manual"` with any `3xx` a failure, and `410` and `413` as answers that stop retrying. A refuses a `delivery.url` that is not `https`, and a secret that is not `whsec_` and 24 to 64 decoded bytes, with `InvalidParams`.
      - each pending entry's two states, pending and in flight, with the store's precondition, insert and queue update in one synchronous block, as § *Only the newest version matters* says
-     - B's routes and its socket, by § *The leg between the gateway and its client*: verification and freshness, the heartbeat, superseding, closing at the token's expiry, tags, and the token as a subprotocol entry
+     - `Gateway` registered under `exports`, and B's routes and its socket, by § *The leg between the gateway and its client*: verification and freshness, the heartbeat, superseding, closing at the token's expiry, tags, and the token as a subprotocol entry
      - the Events types, written in the spec's style from SEP-3415 at b0efd11, which ships no TypeScript, with JSON Schema generated as in phase 1
      - `io.modelcontextprotocol/events` declared with an empty settings object, and `events/list`, `events/subscribe` and `events/unsubscribe` for `mcp.resource.updated`, with `cursor: null`, lazy expiry, `Mcp-Name` as SEP-3415 asks, and `Unsupported` with `data: {"feature": "deliveryMode"}` for `events/poll` and `events/stream`
      - the back channel from A and B, redacted at the source, which every later phase's tests watch through
@@ -971,3 +972,31 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 - **Demo staging beyond the rehearsed beats,** which waits for rehearsal.
 - **The Lumenize port,** whose notes are in [lumenize-port.md](lumenize-port.md).
 - **Sri's suites as a gate,** since they check level 1 rather than grade it.
+
+## Build notes
+
+### Phase 1
+
+**For Larry.** Nothing waits on you. Five things this phase changed that the plan had decided, all made the plan's text now:
+
+- **`run_worker_first` is gone, and the Decisions table says why.** With no `not_found_handling`, a navigation that matches no asset already reaches the Worker, so the setting changed nothing and its mutation could not fail. The navigation test now fails when the `single-page-application` fallback is configured, which is the hazard Stage 2 named.
+- **`Gateway` is registered in phase 4, where B is built,** so phase 1 carries no empty class.
+- **The fetch spy calls the Worker's handler with the running test's env,** not `exports.default.fetch`, which takes no env, so each test's own instance name reaches the edge.
+- **A folder's `GET` answers `{"members": [uri, …]}`,** an object rather than a bare array, so paging can join it later.
+- **The claims header is phase 3's.** Phase 1 verifies no token, so nothing strips or sets `x-rw-principal` yet, and `PUT` and `DELETE` need no token until phase 3's criterion closes them.
+
+**Retro.**
+
+- **The spec's generator flags erase `| null`.** `typescript-json-schema` runs without `strictNullChecks`, so `done?: boolean | null` comes out as `{"type": "boolean"}`, and a closed schema refuses `null` whatever the type says. The nullable-member mutation was therefore made on the schema, not the type. Phase 2 should check whether the spec's `schema.json` at `dae694f6` keeps `null` where its `schema.ts` has it, as in `JSONValue`, since a stricter `schema.json` would refuse valid messages.
+- **The vitest-plugin lane isolates storage per file, not per test, and serves no assets.** Per-test instance names cover the first, and wrangler's `createTestHarness` covers the second, in a Node project of its own.
+- **`createTestHarness`'s own `fetch` does not deliver a navigation.** With the single-page-application fallback configured, a request it sent with `Sec-Fetch-Mode: navigate` still reached the Worker, while the same headers over `node:http` got `index.html`. The navigation test uses `node:http`.
+- **Fake time reaches A.** `vi.setSystemTime` moved the clock A prunes by, and deleting either jump reds its test.
+- **Two mutations survived at first.** The `Content-Length` pre-check could not fail, because the streamed cap refuses the same bodies, so it was deleted rather than tested. The version-reuse test passed without its time jump, so it now also asserts the deletion's row was pruned.
+- **One workerd line, `read end of pipe was aborted`, prints when the 1 MiB tests run together, though none prints it alone.** It is no counted error, and it was not chased further.
+- **21 mutations, all caught against the final tree,** each naming the test that reds, from a table in the session's scratchpad.
+
+**Close-out.**
+
+- **Phase 4 owes a WebSocket answer.** Cloudflare's known issues say Durable Object WebSockets do not work under per-file storage isolation, and the workaround is `--max-workers=1 --no-isolate`, probably in a lane project of its own.
+- **`ATTRIBUTIONS.md` lists the copied routing and the adapted schema script.** Phase 2 adds the spec's `schema.json` and the JSON-RPC core.
+

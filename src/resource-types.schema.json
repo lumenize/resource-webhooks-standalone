@@ -1,0 +1,45 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+        "List": {
+            "additionalProperties": false,
+            "description": "A list, such as `{ \"title\": \"Groceries\", \"items\": [\"oat milk\"] }`.",
+            "properties": {
+                "items": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "title": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "items",
+                "title"
+            ],
+            "type": "object"
+        },
+        "Note": {
+            "additionalProperties": false,
+            "description": "A note, such as `{ \"title\": \"Buy milk\", \"due\": \"2026-10-24\" }`.",
+            "properties": {
+                "done": {
+                    "type": "boolean"
+                },
+                "due": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "title"
+            ],
+            "type": "object"
+        }
+    }
+}
+

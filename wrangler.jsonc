@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "resource-webhooks-standalone",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // A's webhook POST to B, on this Worker's own host, goes out through Cloudflare's front
+  // door like a POST to any other receiver.
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "assets": { "directory": "./public" },
+  "durable_objects": {
+    "bindings": [{ "name": "SERVER", "class_name": "Server" }]
+  },
+  "exports": {
+    "Server": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "vars": {
+    // The Worker's own origin, and the only one whose requests it accepts. A constant per
+    // environment, never computed from a request.
+    "ORIGIN": "https://resource-webhooks-standalone.transformation.workers.dev",
+    // The one instance under /server the edge routes to: A.
+    "SERVER_INSTANCE": "A",
+    // How long A keeps a superseded version, or a deletion, before a later write prunes it.
+    "CUTOFF_WINDOW_MS": "86400000"
+  },
+  "observability": { "enabled": true }
+}

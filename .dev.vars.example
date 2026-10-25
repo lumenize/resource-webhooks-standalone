@@ -1,0 +1,2 @@
+# Template for .dev.vars, which holds this repo's local secrets and stays gitignored.
+# `npm run types` reads this file, so every variable the code reads is named here.
