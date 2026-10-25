@@ -14,7 +14,7 @@ The state here is a resource's rather than a task's, since a resource already ha
 
 ## The beats
 
-Each beat names what is on screen. Its narration is still to write.
+Each beat names what is on screen. Larry has rehearsed the first few, and the narration for the rest waits until he rehearses them after the build.
 
 1. **The cast.** Four boxes: the writer `a`, the server A, the gateway B, and the client `b` behind it. The page shows every message, and what each party holds.
 2. **MCP core as it is** (Scenario 1a). `a` writes a note with `write_note`, and `b` reads it with `resources/read`. Nothing in the result names a version, and hearing about the next change would mean holding a stream open.
