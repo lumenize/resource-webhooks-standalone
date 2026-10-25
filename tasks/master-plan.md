@@ -535,7 +535,7 @@ type ResourceChange = { uri: string } & (
   - the forward-proxy deployment, in which the webhook URL belongs to a gateway acting for the client
   - endpoint verification, with the secret added to the key of its cache
   - the Standard Webhooks headers and signature
-  - SSRF prevention and the TLS requirement
+  - SSRF prevention and the TLS requirement, with Cloudflare's egress making the address check, as [sep-notes.md](../sep-notes.md) records from a measurement
   - the secret's format and rotation
   - the delivery profile
   - `deliveryStatus`
