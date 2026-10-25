@@ -48,7 +48,8 @@ export interface EventsListResult extends PaginatedResult {
 
 /** Where and how a webhook subscription delivers. */
 export interface WebhookDelivery {
-  mode: 'webhook';
+  /** Every example in SEP-3415 carries it, though its text requires only `url` and `secret`. */
+  mode?: 'webhook';
   /** The callback URL, which must be `https`. */
   url: string;
   /** A Standard Webhooks secret: `whsec_` and the base64 of 24 to 64 random bytes. */

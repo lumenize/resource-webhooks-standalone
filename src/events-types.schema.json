@@ -663,6 +663,7 @@
             "properties": {
                 "mode": {
                     "const": "webhook",
+                    "description": "Every example in SEP-3415 carries it, though its text requires only `url` and `secret`.",
                     "type": "string"
                 },
                 "secret": {
@@ -675,7 +676,6 @@
                 }
             },
             "required": [
-                "mode",
                 "secret",
                 "url"
             ],

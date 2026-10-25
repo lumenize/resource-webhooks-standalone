@@ -9,9 +9,9 @@ import { FIXTURES } from './fixtures';
 
 type ConformanceEnv = Env & { CONFORMANCE?: string };
 
-// The suite sends no token, so this build gives it one for every method but the two that
-// subscribe a webhook, which it must never reach without a principal of its own.
-const NEVER_OPENED = new Set(['resources/webhooks/subscribe', 'resources/webhooks/unsubscribe']);
+// The suite sends no token, so this build gives it one for A's methods, but never for the two
+// subscribe methods and their unsubscribes, since a subscription makes A POST wherever it names.
+const NEVER_OPENED = new Set(['events/subscribe', 'events/unsubscribe', 'resources/webhooks/subscribe', 'resources/webhooks/unsubscribe']);
 
 export { Gateway } from '../gateway';
 

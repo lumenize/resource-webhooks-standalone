@@ -1,15 +1,23 @@
 // A's outbound webhooks, as SEP-3415 defines them: the verification handshake before a first
 // delivery to a (principal, url), a token bucket per host for those handshakes, and a retry
-// queue in memory. Each message keeps its webhook-id across retries, and each attempt is signed
-// afresh. The host passes in how to send and how to keep a promise alive past its request.
+// queue in memory, one slot per caller-chosen key, where a newer message replaces an older one.
+// Each message keeps its webhook-id across retries, and each attempt is signed afresh. The host
+// passes in how to send and how to keep a promise alive past its request.
 import { JsonRpcError } from '../json-rpc';
 import { CALLBACK_ENDPOINT_ERROR, RESOURCE_EXHAUSTED } from '../events-types';
 import { constantTimeEqual, deliveryHeaders } from '../standard-webhooks';
 
-/** A POST to a callback URL, sent without following redirects and given up after the host's timeout. */
-export type Send = (url: string, headers: Record<string, string>, body: string) => Promise<SendResult>;
+/**
+ * A POST to a callback URL, sent without following redirects and given up after the host's
+ * timeout. With `readAnswer`, it reads at most MAX_ANSWER_BYTES of the answer, and a longer one
+ * comes back empty. Without it, it reads none, since a delivery's answer is only its status.
+ */
+export type Send = (url: string, headers: Record<string, string>, body: string, readAnswer: boolean) => Promise<SendResult>;
 
-export type SendResult = { status: number; body: string } | { failure: 'timeout' | 'connection_refused' | 'tls_error' };
+export type SendResult = { status: number; body?: string } | { failure: 'timeout' | 'connection_refused' };
+
+/** The most of a challenge's answer A reads, since anyone can name the URL that answers it. */
+export const MAX_ANSWER_BYTES = 4096;
 
 /** What the host reports to the page, which never sees a secret or a signature. */
 export type DeliveryReport =
@@ -24,6 +32,8 @@ export interface DeliveriesOptions {
   schedule: () => readonly number[];
   /** How many verification POSTs one host may receive in a burst, refilled one a minute. */
   verificationBurst: number;
+  /** How long a handshake covers its `(principal, url)` since it last did, as a grant lasts. */
+  verificationTtlMs: number;
   report?: (report: DeliveryReport) => void;
 }
 
@@ -56,14 +66,21 @@ export function clampSchedule(delays: readonly number[]): number[] {
   });
 }
 
+// One slot's delivery. Its message is in flight while a POST is outstanding, and waiting between
+// attempts otherwise. A newer message for the slot waits as `pending`, and replaces the one being
+// delivered as soon as its POST is answered or at once if it is waiting.
 interface Slot {
+  subscriptionId: string;
   pending?: Message;
+  cancelled: boolean;
+  /** Ends the wait between attempts early. */
+  wake?: () => void;
 }
 
 export class Deliveries {
   readonly #options: DeliveriesOptions;
   // Soft state, as SEP-3415 allows: lost on eviction, rebuilt by the next subscribe.
-  readonly #verified = new Set<string>();
+  readonly #verified = new Map<string, number>();
   readonly #buckets = new Map<string, { tokens: number; at: number }>();
   readonly #slots = new Map<string, Slot>();
   #generation = 0;
@@ -78,100 +95,129 @@ export class Deliveries {
    */
   async requireVerified(principal: string, url: string, secret: string, subscriptionId: string): Promise<void> {
     const key = `${principal}\n${url}`;
+    const now = Date.now();
+    this.#sweep(now);
     if (this.#verified.has(key)) {
+      this.#verified.set(key, now + this.#options.verificationTtlMs);
       this.#options.report?.({ kind: 'verification', url, outcome: 'cached' });
       return;
     }
-    this.#takeVerificationToken(new URL(url).host);
+    this.#takeVerificationToken(new URL(url).host, now);
     const challenge = randomId(24);
     const body = JSON.stringify({ type: 'verification', challenge });
     const headers = await deliveryHeaders(secret, `msg_verification_${randomId(16)}`, subscriptionId, body, nowSeconds());
-    const result = await this.#options.send(url, headers, body);
+    const generation = this.#generation;
+    const result = await this.#options.send(url, headers, body, true);
     if ('failure' in result) {
       this.#options.report?.({ kind: 'verification', url, outcome: 'failed' });
       throw new JsonRpcError(CALLBACK_ENDPOINT_ERROR, 'The callback endpoint could not be reached', { reason: result.failure });
     }
     let echoed: unknown;
     try {
-      echoed = (JSON.parse(result.body) as { challenge?: unknown }).challenge;
+      echoed = (JSON.parse(result.body ?? '') as { challenge?: unknown }).challenge;
     } catch {
       echoed = undefined;
     }
     const ok = result.status >= 200 && result.status < 300 && typeof echoed === 'string' && constantTimeEqual(echoed, challenge);
     this.#options.report?.({ kind: 'verification', url, outcome: ok ? 'verified' : 'failed' });
     if (!ok) throw new JsonRpcError(CALLBACK_ENDPOINT_ERROR, 'The callback endpoint did not echo the challenge', { reason: 'challenge_failed' });
-    this.#verified.add(key);
+    // A Wipe while the challenge was out forgets everything, this handshake included.
+    if (generation === this.#generation) this.#verified.set(key, Date.now() + this.#options.verificationTtlMs);
   }
 
-  /**
-   * Delivers `message` in `slot`, retrying on A's schedule. A message for a slot already in
-   * flight waits as its slot's one pending message, replacing any pending before it.
-   */
+  /** Delivers `message` in `slot`, retrying on A's schedule, unless a newer one replaces it. */
   enqueue(slot: string, message: Message): void {
     const existing = this.#slots.get(slot);
     if (existing) {
       existing.pending = message;
+      existing.wake?.();
       return;
     }
-    const state: Slot = { pending: message };
-    this.#slots.set(slot, state);
-    this.#options.waitUntil(this.#drain(slot, state, this.#generation));
+    this.#start(slot, message);
   }
 
-  /** Forgets every verification and abandons every pending delivery, as a Wipe does. */
+  /** Stops every delivery for a subscription, as unsubscribing does. */
+  cancel(subscriptionId: string): void {
+    for (const [slot, state] of this.#slots) {
+      if (state.subscriptionId !== subscriptionId) continue;
+      state.cancelled = true;
+      state.wake?.();
+      this.#slots.delete(slot);
+    }
+  }
+
+  /** Forgets every verification and abandons every delivery, as a Wipe does. */
   clear(): void {
     this.#generation++;
+    for (const state of this.#slots.values()) {
+      state.cancelled = true;
+      state.wake?.();
+    }
+    this.#slots.clear();
     this.#verified.clear();
     this.#buckets.clear();
-    this.#slots.clear();
   }
 
-  async #drain(slot: string, state: Slot, generation: number): Promise<void> {
-    while (state.pending && generation === this.#generation) {
-      const message = state.pending;
-      state.pending = undefined;
-      await this.#deliver(message, generation);
-    }
-    if (this.#slots.get(slot) === state) this.#slots.delete(slot);
+  // Each message runs under its own waitUntil, which holds the object up to 15 minutes from the
+  // promise's start, so the schedule's window is measured from the message's first attempt.
+  #start(slot: string, message: Message): void {
+    const state: Slot = { subscriptionId: message.subscriptionId, cancelled: false };
+    this.#slots.set(slot, state);
+    this.#options.waitUntil(this.#deliver(slot, state, message));
   }
 
-  async #deliver(message: Message, generation: number): Promise<void> {
+  async #deliver(slot: string, state: Slot, message: Message): Promise<void> {
     const delays = this.#options.schedule();
-    for (let attempt = 1; attempt <= delays.length + 1; attempt++) {
-      if (generation !== this.#generation) return;
+    for (let attempt = 1; ; attempt++) {
       const headers = await deliveryHeaders(message.secret, message.webhookId, message.subscriptionId, message.body, nowSeconds());
-      const result = await this.#options.send(message.url, headers, message.body);
+      if (state.cancelled) return;
+      const result = await this.#options.send(message.url, headers, message.body, false);
       const outcome = 'failure' in result ? result.failure : String(result.status);
       this.#options.report?.({ kind: 'attempt', url: message.url, webhookId: message.webhookId, attempt, outcome });
-      if (!('failure' in result)) {
-        if (result.status >= 200 && result.status < 300) return;
-        // 410 and 413 refuse this message for good, without ending the subscription.
-        if (result.status === 410 || result.status === 413) return;
-      }
-      if (attempt <= delays.length) await sleep(delays[attempt - 1]);
+      // 410 and 413 refuse this message for good, without ending the subscription.
+      const settled = !('failure' in result) && ((result.status >= 200 && result.status < 300) || result.status === 410 || result.status === 413);
+      if (state.cancelled || settled || state.pending || attempt > delays.length) break;
+      await this.#wait(state, delays[attempt - 1]);
+      if (state.cancelled || state.pending) break;
     }
+    if (state.cancelled) return;
+    const next = state.pending;
+    this.#slots.delete(slot);
+    if (next) this.#start(slot, next);
   }
 
-  #takeVerificationToken(host: string): void {
-    const now = Date.now();
+  #wait(state: Slot, ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        state.wake = undefined;
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      state.wake = done;
+    });
+  }
+
+  #takeVerificationToken(host: string, now: number): void {
     const bucket = this.#buckets.get(host) ?? { tokens: this.#options.verificationBurst, at: now };
     bucket.tokens = Math.min(this.#options.verificationBurst, bucket.tokens + (now - bucket.at) / 60_000);
     bucket.at = now;
-    if (bucket.tokens < 1) {
-      this.#buckets.set(host, bucket);
-      throw new JsonRpcError(RESOURCE_EXHAUSTED, 'Too many verification requests to this host', { limit: 'verifications' });
-    }
-    bucket.tokens -= 1;
     this.#buckets.set(host, bucket);
+    if (bucket.tokens < 1) throw new JsonRpcError(RESOURCE_EXHAUSTED, 'Too many verification requests to this host', { limit: 'verifications' });
+    bucket.tokens -= 1;
+  }
+
+  // Drops expired verifications, and buckets that have refilled, which a new one would equal, so
+  // neither map grows past what the last few minutes put in it.
+  #sweep(now: number): void {
+    for (const [key, until] of this.#verified) if (until <= now) this.#verified.delete(key);
+    const refill = this.#options.verificationBurst * 60_000;
+    for (const [host, bucket] of this.#buckets) if (now - bucket.at >= refill) this.#buckets.delete(host);
   }
 }
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** A random identifier of ASCII letters and digits, as webhook-id and challenges use. */

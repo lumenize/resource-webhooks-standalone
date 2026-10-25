@@ -2,7 +2,8 @@
 // The command the conformance suite's client scenarios drive: it runs `src/client/mcp-client.ts`
 // against the server URL the suite appends, signing in when the server asks, listing tools, and
 // calling one, `add_numbers` where the scenario offers it. An Events scenario instead subscribes
-// as level 1's `b` does. Node strips the modules' types itself.
+// and refreshes as level 1's `b` does, though with no gateway, since the suite never delivers.
+// Node strips the modules' types itself.
 import { createMcpClient, OAuthSession } from '../src/client/mcp-client.ts';
 import { newSecret } from '../src/standard-webhooks.ts';
 
@@ -41,7 +42,8 @@ async function events() {
         cursor: subscription.cursor,
       });
       subscription.cursor = result.cursor ?? null;
-      subscription.refreshAt = grantedAt + (Date.parse(result.refreshBefore) - grantedAt) / 2;
+      // A grant of `null` never expires, so it needs no refresh.
+      subscription.refreshAt = result.refreshBefore === null ? Infinity : grantedAt + (Date.parse(result.refreshBefore) - grantedAt) / 2;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

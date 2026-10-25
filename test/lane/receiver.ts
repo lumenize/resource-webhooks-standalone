@@ -13,7 +13,6 @@ export interface Received {
 export interface Receiver {
   /** A URL at this receiver, as `https://fault-1f2e3d4c.example/hook`. */
   url(path?: string): string;
-  origin: string;
   received: Received[];
   /** The POSTs that were deliveries rather than challenges. */
   deliveries(): Received[];
@@ -39,7 +38,6 @@ export function receiver({ deliveries, challenges = echo }: { deliveries: Answer
   });
   return {
     url: (path = '/hook') => `${origin}${path}`,
-    origin,
     received,
     deliveries: () => received.filter((each) => each.type !== 'verification'),
     challenges: () => received.filter((each) => each.type === 'verification'),

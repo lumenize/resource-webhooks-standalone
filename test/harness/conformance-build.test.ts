@@ -6,12 +6,16 @@ import { HARNESS_SECRETS } from './sign-in';
 
 const ENVELOPE = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} };
 
-function toolsList(server: ReturnType<typeof createTestHarness>, host: string) {
+function call(server: ReturnType<typeof createTestHarness>, host: string, method: string, params: Record<string, unknown> = {}, headers: Record<string, string> = {}) {
   return server.fetch(`http://${host}/server/A/mcp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'tools/list' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: { _meta: ENVELOPE } }),
+    headers: { 'Content-Type': 'application/json', 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': method, ...headers },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: { ...params, _meta: ENVELOPE } }),
   });
+}
+
+function toolsList(server: ReturnType<typeof createTestHarness>, host: string) {
+  return call(server, host, 'tools/list');
 }
 
 describe('with CONFORMANCE set', () => {
@@ -24,6 +28,15 @@ describe('with CONFORMANCE set', () => {
     expect(response.status).toBe(200);
     const { result } = (await response.json()) as { result: { tools: { name: string }[] } };
     expect(result.tools.map(({ name }) => name)).toContain('test_simple_text');
+  });
+
+  it('gives the suite no token for subscribing, so a subscribe without one answers 401', async () => {
+    const subscription = { name: 'mcp.resource.updated', arguments: { uri: 'http://localhost:8788/server/A/notes/inbox/note-42' } };
+    const subscribe = await call(server, 'localhost:8788', 'events/subscribe', { ...subscription, delivery: { mode: 'webhook', url: 'https://receiver.invalid/hook', secret: `whsec_${btoa('x'.repeat(32))}` }, cursor: null }, { 'Mcp-Name': subscription.name });
+    expect(subscribe.status).toBe(401);
+    const unsubscribe = await call(server, 'localhost:8788', 'events/unsubscribe', { ...subscription, delivery: { url: 'https://receiver.invalid/hook' } }, { 'Mcp-Name': subscription.name });
+    expect(unsubscribe.status).toBe(401);
+    expect((await call(server, 'localhost:8788', 'events/list')).status).toBe(200);
   });
 
   it('serves nothing on any other host', async () => {

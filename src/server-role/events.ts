@@ -54,6 +54,8 @@ interface SubscriptionRow extends Record<string, SqlStorageValue> {
 export class Events {
   readonly #options: EventsOptions;
   readonly #sql: SqlStorage;
+  // Raised by each Wipe, so a subscribe that waited out one on its handshake writes nothing.
+  #generation = 0;
 
   constructor(options: EventsOptions) {
     this.#options = options;
@@ -82,22 +84,16 @@ export class Events {
     const { uri, url } = this.#key(params, principal);
     const { secret } = params.delivery;
     if (!secretBytes(secret)) throw new JsonRpcError(INVALID_PARAMS, 'delivery.secret must be whsec_ and the base64 of 24 to 64 bytes');
-    const held = this.#sql
-      .exec<{ count: number }>(
-        'SELECT COUNT(*) AS count FROM Subscriptions WHERE principal = ? AND NOT (targetKind = ? AND target = ? AND url = ?)',
-        principal!,
-        TARGET_KIND,
-        uri,
-        url,
-      )
-      .one().count;
-    if (held >= this.#options.subscriptionCap) {
-      throw new JsonRpcError(RESOURCE_EXHAUSTED, 'Too many subscriptions', { limit: 'subscriptions', max: this.#options.subscriptionCap });
-    }
+    this.#requireUnderCap(principal!, uri, url);
+    const generation = this.#generation;
     const id = await this.#subscriptionId(principal!, url, uri);
     await this.#options.deliveries.requireVerified(principal!, url, secret, id);
 
-    // The handshake awaited a fetch, so the row is written only now, in one synchronous step.
+    // The handshake awaited a fetch, which let other requests in, a Wipe or this principal's other
+    // subscribes among them. So the checks are made again, and the row written, in one
+    // synchronous step.
+    if (generation !== this.#generation) throw new JsonRpcError(FORBIDDEN, 'The server was wiped while this subscribe waited for its handshake');
+    this.#requireUnderCap(principal!, uri, url);
     const ttl = typeof params.ttlMs === 'number' ? Math.min(Math.max(params.ttlMs, 0), this.#options.maxTtlMs) : this.#options.maxTtlMs;
     const refreshBefore = new Date(Date.now() + ttl).toISOString();
     this.#sql.exec(
@@ -119,6 +115,8 @@ export class Events {
       .exec('DELETE FROM Subscriptions WHERE targetKind = ? AND target = ? AND principal = ? AND url = ? RETURNING id', TARGET_KIND, uri, principal!, url)
       .toArray();
     if (removed.length === 0) throw new JsonRpcError(NOT_FOUND, 'No such subscription', { kind: 'subscription' });
+    // SEP-3415: unsubscribing stops webhook deliveries immediately, retries included.
+    this.#options.deliveries.cancel(removed[0].id as string);
     return { resultType: 'complete' };
   }
 
@@ -149,7 +147,24 @@ export class Events {
 
   /** Forgets every subscription, as a Wipe does. */
   clear(): void {
+    this.#generation++;
     this.#sql.exec('DELETE FROM Subscriptions');
+  }
+
+  // A principal holds at most SUBSCRIPTION_CAP subscriptions, the one being refreshed not counted.
+  #requireUnderCap(principal: string, uri: string, url: string): void {
+    const held = this.#sql
+      .exec<{ count: number }>(
+        'SELECT COUNT(*) AS count FROM Subscriptions WHERE principal = ? AND NOT (targetKind = ? AND target = ? AND url = ?)',
+        principal,
+        TARGET_KIND,
+        uri,
+        url,
+      )
+      .one().count;
+    if (held >= this.#options.subscriptionCap) {
+      throw new JsonRpcError(RESOURCE_EXHAUSTED, 'Too many subscriptions', { limit: 'subscriptions', max: this.#options.subscriptionCap });
+    }
   }
 
   #key(params: { name: string; arguments?: { [key: string]: unknown }; delivery: { url: string } }, principal: string | undefined) {

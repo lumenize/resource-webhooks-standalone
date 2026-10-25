@@ -7,7 +7,8 @@ import { acceptPage, authorized, PAGE_TAG, report, type Control } from './back-c
 import { CLAIMS_HEADER } from './edge';
 import { serveMcp } from './mcp-http';
 import { serveNotes } from './notes-http';
-import type { Send } from './server-role/deliveries';
+import { readCapped } from './read-capped';
+import { MAX_ANSWER_BYTES, type Send } from './server-role/deliveries';
 import { ServerRole, type ServerExtras } from './server-role/server-role';
 
 interface Claims {
@@ -31,10 +32,15 @@ export class Server extends DurableObject<Env> {
     const timeoutMs = Number(env.ATTEMPT_TIMEOUT_MS);
     // A delivery never follows a redirect, so any 3xx is a failed attempt and its Location is
     // never fetched.
-    const send: Send = async (url, headers, body) => {
+    const send: Send = async (url, headers, body, readAnswer) => {
       try {
         const response = await fetch(url, { method: 'POST', headers, body, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
-        return { status: response.status, body: await response.text() };
+        if (!readAnswer) {
+          await response.body?.cancel();
+          return { status: response.status };
+        }
+        const answer = await readCapped(response.body, MAX_ANSWER_BYTES);
+        return { status: response.status, body: answer ? new TextDecoder().decode(answer) : '' };
       } catch (error) {
         return { failure: (error as Error).name === 'TimeoutError' ? 'timeout' : 'connection_refused' };
       }
@@ -105,6 +111,8 @@ export class Server extends DurableObject<Env> {
     } else if (control.action === 'schedule' && Array.isArray(control.delaysMs) && control.delaysMs.every((delay) => typeof delay === 'number')) {
       this.ctx.storage.kv.put('retrySchedule', control.delaysMs);
       socket.send(JSON.stringify({ type: 'done', action: 'schedule' }));
+    } else {
+      socket.send(JSON.stringify({ type: 'unknown', action: control.action }));
     }
   }
 

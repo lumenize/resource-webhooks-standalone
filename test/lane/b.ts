@@ -39,9 +39,6 @@ export function upgrade(lane: Lane, url: string, token?: string, headers: Record
 }
 
 export interface Listener {
-  socket: WebSocket;
-  /** Every message B sent down the socket, parsed. */
-  messages: Record<string, unknown>[];
   closes: { code: number; reason: string }[];
   secret: string;
   hookUrl: string;
@@ -54,17 +51,13 @@ export interface Listener {
 
 /**
  * Opens a client's socket to B with a token for that socket, a new one unless given one, pings
- * on B's heartbeat as `b` does, and registers a secret on it, waiting for B's acknowledgement
- * unless told not to.
+ * on B's heartbeat as `b` does, and registers a secret on it, waiting for B's acknowledgement.
  */
-export async function listen(
-  lane: Lane,
-  party: Party,
-  { secret = newSecret(), awaitAck = true, token }: { secret?: string; awaitAck?: boolean; token?: string } = {},
-): Promise<Listener> {
+export async function listen(lane: Lane, party: Party, { secret = newSecret(), token }: { secret?: string; token?: string } = {}): Promise<Listener> {
   const url = socketUrl(lane, party.clientId);
   const response = await upgrade(lane, url, token ?? (await party.session.tokenForResource(env.ORIGIN, url)));
   expect(response.status).toBe(101);
+  expect(response.headers.get('Sec-WebSocket-Protocol')).toBe('rw.1');
   const socket = response.webSocket!;
   socket.accept();
   const messages: Record<string, unknown>[] = [];
@@ -80,10 +73,8 @@ export async function listen(
   });
   socket.send(JSON.stringify({ secret }));
   // b subscribes only once B has stored its secret, since A's challenge reaches B first.
-  if (awaitAck) await vi.waitFor(() => expect(messages).toContainEqual({ type: 'secret-registered' }));
+  await vi.waitFor(() => expect(messages.find(({ type }) => type === 'secret-registered' || type === 'secret-refused')).toEqual({ type: 'secret-registered' }));
   return {
-    socket,
-    messages,
     closes,
     secret,
     hookUrl: hookUrl(lane, party.clientId),
@@ -149,7 +140,7 @@ export async function watch(lane: Lane, party: 'A' | 'B'): Promise<Page> {
       await vi.waitFor(() => {
         answer = parsed()
           .slice(before)
-          .find((message) => (message.type === 'done' || message.type === 'refused') && message.action === action);
+          .find((message) => ['done', 'refused', 'unknown'].includes(message.type as string) && message.action === action);
         expect(answer).toBeDefined();
       });
       return answer!;

@@ -13,8 +13,12 @@ export interface Forwarded {
 
 export type GatewayReport = {
   kind: 'delivery';
-  client: string;
-  webhookId: string;
+  /**
+   * The client the path names and the delivery's webhook-id, only once its signature verifies,
+   * since anyone can POST to B and the page shows what B reports.
+   */
+  client?: string;
+  webhookId?: string;
   signature: 'verified' | 'failed' | 'stale' | 'unchecked';
   status: number;
 };
@@ -68,7 +72,7 @@ export class GatewayRole {
   }
 
   #answer(client: string, webhookId: string, signature: GatewayReport['signature'], answer: Answer): Answer {
-    this.#options.report?.({ kind: 'delivery', client, webhookId, signature, status: answer.status });
+    this.#options.report?.({ kind: 'delivery', ...(signature === 'verified' ? { client, webhookId } : {}), signature, status: answer.status });
     return answer;
   }
 }

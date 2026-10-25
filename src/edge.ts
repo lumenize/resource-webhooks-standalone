@@ -172,7 +172,8 @@ async function socketGuard(request: Request, instance: string, env: Env): Promis
   const audience = `${env.ORIGIN}${pathname}`;
   const verified = await verifyToken(env.TOKEN_SIGNING_KEY, token, audience, Math.floor(Date.now() / 1000));
   if ('error' in verified) return new Response(`Unauthorized: ${verified.error}`, { status: 401 });
-  if (verified.claims.sub !== decodeURIComponent(client)) return new Response('Unauthorized: the token is for another client', { status: 401 });
+  // A client id is URL-safe, so the path names it as it is, and an encoded one names no client.
+  if (verified.claims.sub !== client) return new Response('Unauthorized: the token is for another client', { status: 401 });
   return withClaims(request, verified.claims);
 }
 

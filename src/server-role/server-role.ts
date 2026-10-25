@@ -119,6 +119,7 @@ export class ServerRole {
       waitUntil: options.waitUntil,
       schedule: () => clampSchedule(options.retrySchedule()),
       verificationBurst: options.verificationBurst,
+      verificationTtlMs: options.maxTtlMs,
       report: options.report,
     });
     this.#events = new Events({

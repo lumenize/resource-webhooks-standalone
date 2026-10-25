@@ -19,7 +19,8 @@ interface Attachment {
   client: string;
   /** The token's expiry, in seconds since the epoch. */
   exp: number;
-  connectedAt: number;
+  /** When the socket opened, as an ISO string. */
+  connectedAt: string;
   secret?: string;
 }
 
@@ -45,12 +46,12 @@ export class Gateway extends DurableObject<Env> {
     const path = new URL(request.url).pathname.slice(`/gateway/${name}`.length);
     if (path === '/page') return acceptPage(this.ctx);
     const socket = /^\/ws\/([^/]+)$/.exec(path);
-    if (socket) return await this.#acceptClient(decodeURIComponent(socket[1]), request);
+    if (socket) return await this.#acceptClient(socket[1], request);
     const hook = /^\/hooks\/([^/]+)$/.exec(path);
     if (hook && request.method === 'POST') {
       const bytes = await readCapped(request.body);
       if (!bytes) return new Response('Content Too Large', { status: 413 });
-      const answer = await this.#role.receive(decodeURIComponent(hook[1]), request.headers, bytes);
+      const answer = await this.#role.receive(hook[1], request.headers, bytes);
       return new Response(answer.body ?? null, { status: answer.status, headers: answer.body?.startsWith('{') ? { 'Content-Type': 'application/json' } : {} });
     }
     return new Response('Not Found', { status: 404 });
@@ -68,12 +69,15 @@ export class Gateway extends DurableObject<Env> {
       if (parsed.type === 'control') this.#control(socket, parsed as Control);
       return;
     }
+    if (!('secret' in parsed)) return;
     const attachment = socket.deserializeAttachment() as Attachment;
-    if (typeof parsed.secret === 'string' && secretBytes(parsed.secret)) {
-      socket.serializeAttachment({ ...attachment, secret: parsed.secret } satisfies Attachment);
-      socket.send(JSON.stringify({ type: 'secret-registered' }));
-      report(this.ctx, 'B', { kind: 'secret-registered', client: attachment.client, secret: parsed.secret });
+    if (typeof parsed.secret !== 'string' || !secretBytes(parsed.secret)) {
+      socket.send(JSON.stringify({ type: 'secret-refused' }));
+      return;
     }
+    socket.serializeAttachment({ ...attachment, secret: parsed.secret } satisfies Attachment);
+    socket.send(JSON.stringify({ type: 'secret-registered' }));
+    report(this.ctx, 'B', { kind: 'secret-registered', client: attachment.client, secret: parsed.secret });
   }
 
   async alarm(): Promise<void> {
@@ -90,7 +94,7 @@ export class Gateway extends DurableObject<Env> {
     // A client that reconnects replaces its older sockets, as Lumenize's ClientGateway does.
     for (const older of this.ctx.getWebSockets(`client:${client}`)) older.close(SUPERSEDED, 'Superseded by a newer connection');
     this.ctx.acceptWebSocket(server, [`client:${client}`]);
-    server.serializeAttachment({ client, exp: claims.exp, connectedAt: Date.now() } satisfies Attachment);
+    server.serializeAttachment({ client, exp: claims.exp, connectedAt: new Date().toISOString() } satisfies Attachment);
     await this.#scheduleExpiry();
     report(this.ctx, 'B', { kind: 'connected', client });
     return new Response(null, { status: 101, webSocket: browserSide, headers: { 'Sec-WebSocket-Protocol': SUBPROTOCOL } });
@@ -104,7 +108,7 @@ export class Gateway extends DurableObject<Env> {
     const [socket] = this.ctx.getWebSockets(`client:${client}`);
     if (!socket) return undefined;
     const attachment = socket.deserializeAttachment() as Attachment;
-    const lastSeen = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime() ?? attachment.connectedAt;
+    const lastSeen = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime() ?? Date.parse(attachment.connectedAt);
     return Date.now() - lastSeen > 2 * this.#heartbeatMs ? undefined : { socket, attachment };
   }
 
@@ -146,6 +150,8 @@ export class Gateway extends DurableObject<Env> {
     if (control.action === 'wipe') {
       for (const socket of this.ctx.getWebSockets()) if (!this.ctx.getTags(socket).includes(PAGE_TAG)) socket.close(1012, 'Wiped');
       page.send(JSON.stringify({ type: 'done', action: 'wipe' }));
+    } else {
+      page.send(JSON.stringify({ type: 'unknown', action: control.action }));
     }
   }
 }
