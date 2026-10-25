@@ -101,6 +101,10 @@ These notes are for the design's second level, resource state sync. The first le
 - **How a gateway reaches its client.** SEP-3415 leaves that channel to the endpoint, and so does this extension.
 - **A mirror,** where a subscriber keeps copies at the server's versions and serves them to readers of its own. It needs nothing from this extension that a client does not, and is not covered for now.
 
+## Findings
+
+What building the prototype teaches, one entry for each item of the master plan's § *What building it should teach us*, filled in as the build answers them. The PR's proposal carries them. None yet.
+
 ## Withdrawn
 
 - **R9** (a MUST to end a subscription whose principal can no longer read what it covers), withdrawn 2026-10-25 in favour of SEP-3415's § *Authorization*, which R17 takes by reference, and R39.

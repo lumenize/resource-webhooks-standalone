@@ -1,6 +1,6 @@
 # Resource webhooks, standalone
 
-**Status:** Pass 1 draft, revised 2026-10-25. Stage 1 ran on 2026-10-23, and Larry settled its decisions by 2026-10-25. A fresh Stage 1 pass comes next, then the mining pass over the predecessor, then Pass 2's phases. The requirements level 2 implies are numbered in [sep-notes.md](../sep-notes.md).
+**Status:** Pass 1 draft, revised 2026-10-25. Stage 1 ran twice, on 2026-10-23 and 2026-10-25, and Larry settled the decisions both raised. The mining pass over the predecessor comes next, then Pass 2's phases, then Stage 2. The requirements level 2 implies are numbered in [sep-notes.md](../sep-notes.md).
 
 ## Objective
 
@@ -8,7 +8,7 @@
 
 "Best" in the sentence above is a weighted value judgement, trading off technical feasibility, implementation elegance, and political viability to a potential sponsor, the core committee, and the MCP community at large.
 
-**A prototype comes first because building is how we learn.** Some questions surface only when you try to implement. So where the design could raise one, as collections, catching up after a gap and resources outside `https` all could, the prototype takes it on rather than deferring it, and each answer it finds lands in `sep-notes.md`.
+**A prototype comes first because building is how we learn.** Some questions surface only when you try to implement. So where the design could raise one, as collections, catching up after a gap and resources outside `https` all could, the prototype takes it on rather than deferring it, and each answer it finds lands in `sep-notes.md` § *Findings*.
 
 ## Context
 
@@ -22,7 +22,7 @@
 - **The working group is now Tasks and Events,** renamed on 2026-10-16 by its charter's changelog and announced by Peter in Discord on 2026-10-21. The Agents working group becomes an interest group, its Tasks work folds in, and Luca Chang and Caitie McCaffrey join Clare Liguori and Peter as leads, "to allow us to figure how these things interact". Task state, the subject of Open Question 6, and resource state, this work's, now sit with one group.
 - **The working group's charter is the product lens.** Its mission is to "define how servers proactively notify clients of state changes", "with defined ordering guarantees that hold across all transports", which level 2's per-URI version order meets. Its scope takes in SEPs on "delivery semantics, and event ordering guarantees", and leaves out modifications to `notifications/resources/updated` "that do not relate to proactive server-initiated delivery". Level 1 leaves that notification untouched, and level 2 is proactive delivery throughout. Its success criteria ask for "an accepted SEP defining the trigger/callback mechanism and its subscription lifecycle". `resources/webhooks/subscribe` is a second subscription lifecycle beside `events/subscribe`, a cost the comparison between flavors weighs.
 - **SEP-3415 takes nothing new while its vote is pending.** Peter, in Discord on 2026-10-20: it is already judged big. The core maintainers may ask for changes after their review, which could give us another chance to comment on SEP-3415 itself.
-- **Meanwhile, we start engaging the working group with a PR of a document, not code,** to `modelcontextprotocol/experimental-ext-triggers-events`, opened once this prototype has taught us enough, so the group can comment on what we learned. A SEP follows it.
+- **Meanwhile, we start engaging the working group with a PR of proposals, not code,** to `modelcontextprotocol/experimental-ext-triggers-events`, as Luca's `proposals/XXXX-task-event-sources.md` is, opened once this prototype has taught us enough, so the group can comment on what we learned. The formal SEP follows, in `../modelcontextprotocol`, once SEP-3415 has landed and Peter is ready to sponsor it.
 - **An Extensions Track SEP needs a reference implementation in an official SDK before review** (SEP-2133). This prototype is independent of the SDK, so that implementation comes later, probably built on Peter's TypeScript Events work.
 
 ### Technical
@@ -63,7 +63,7 @@ The sections that follow say what makes this worth building, then show the first
   4. **The demo page,** served from the Worker's own origin, with `b` running in the browser, a control that puts `b` to sleep and wakes it, and the controls § *The cast* names. Beats 1 to 13 need only the three phases before it.
   5. **The `patch` form.**
   6. **Resources without an `https` URI.**
-  7. **The document the PR carries,** last.
+  7. **The PR's proposals,** last: one for each flavor built, this one as `proposals/XXXX-resource-webhooks.md`, in the shape of Luca's draft. Each has its flavor's `sep-notes.md` requirements as its Specification, then what building taught us, then its ledger of departures and narrowings, here D1 and N1, N3, N4 and N6.
 
   That keeps the Objective's promise to take on what an implementation teaches rather than defer it.
 - **Pass 2 waits on the mining pass,** which settles from the predecessor the test oracle (the conformance framework), the validator (`@cfworker/json-schema`, on JSON Schema generated from the spec's TypeScript), the JSON-RPC core (`json-rpc-mixin`), the transport headers (`Mcp-Method` and `Mcp-Name`) and the `patch` rules.
