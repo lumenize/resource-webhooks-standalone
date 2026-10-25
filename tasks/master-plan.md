@@ -23,7 +23,7 @@
 - **The working group's charter is the product lens.** Its mission is to "define how servers proactively notify clients of state changes", "with defined ordering guarantees that hold across all transports", which level 2's per-URI version order meets. Its scope takes in SEPs on "delivery semantics, and event ordering guarantees", and leaves out modifications to `notifications/resources/updated` "that do not relate to proactive server-initiated delivery". Level 1 leaves that notification untouched, and level 2 is proactive delivery throughout. Its success criteria ask for "an accepted SEP defining the trigger/callback mechanism and its subscription lifecycle". `resources/webhooks/subscribe` is a second subscription lifecycle beside `events/subscribe`, a cost the comparison between flavors weighs.
 - **SEP-3415 takes nothing new while its vote is pending.** Peter, in Discord on 2026-10-20: it is already judged big. The core maintainers may ask for changes after their review, which could give us another chance to comment on SEP-3415 itself.
 - **Meanwhile, we start engaging the working group with a PR of proposals, not code,** to `modelcontextprotocol/experimental-ext-triggers-events`, as Luca's `proposals/XXXX-task-event-sources.md` is, opened once this prototype has taught us enough, so the group can comment on what we learned. The formal SEP follows, in `../modelcontextprotocol`, once SEP-3415 has landed and Peter is ready to sponsor it.
-- **An Extensions Track SEP needs a reference implementation in an official SDK before review** (SEP-2133). This prototype is independent of the SDK, so that implementation comes later, probably built on Peter's TypeScript Events work.
+- **An Extensions Track SEP needs a reference implementation in an official SDK before review** (SEP-2133). This prototype is independent of the SDK, so that implementation comes later. No Events implementation is in the official TypeScript SDK yet (checked 2026-10-25), and Matt Carey's `typescript-sdk` #2820 adds the server and client extension mechanism it would use.
 
 ### Technical
 
@@ -66,7 +66,7 @@ The sections that follow say what makes this worth building, then show the first
   7. **The PR's proposals,** last: one for each flavor built, this one as `proposals/XXXX-resource-webhooks.md`, in the shape of Luca's draft. Each has its flavor's `sep-notes.md` requirements as its Specification, then what building taught us, then its ledger of departures and narrowings, here D1 and N1, N3, N4 and N6.
 
   That keeps the Objective's promise to take on what an implementation teaches rather than defer it.
-- **Pass 2 waits on the mining pass,** which settles from the predecessor the test oracle (the conformance framework), the validator (`@cfworker/json-schema`, on JSON Schema generated from the spec's TypeScript), the JSON-RPC core (`json-rpc-mixin`), the transport headers (`Mcp-Method` and `Mcp-Name`) and the `patch` rules.
+- **The mining pass over the predecessor ran on 2026-10-25,** and gave each piece of its task files a fate. § *Phases* carries what it settled: the test oracle, the validator, the JSON-RPC core, the transport's details and the `patch` rules. The Lumenize port's notes now live in [lumenize-port.md](lumenize-port.md).
 - **Gates the PR** to `modelcontextprotocol/experimental-ext-triggers-events`, from the fork in `../experimental-ext-triggers-events` on its `resource-webhooks` branch.
 - **Gates the official-SDK reference implementation,** in `../mcp-typescript-sdk`.
 - **Gates the comparison** with the flavors that extend or amend Events.
@@ -139,8 +139,9 @@ block-beta
 | `/gateway/B/page` | WebSocket | B, the page's back channel | nothing |
 | `/register`, `/authorize`, `/token`, `/.well-known/...` | as OAuth defines them | A, by hand | nothing |
 
-- **A holds notes and lists.** Each one is an `https` resource, such as `.../server/A/notes/inbox/note-42`, which a client can read with `resources/read` or a plain `GET`, and which carries an `ETag` per version. Notes change through A's tools, `write_note` and `delete_note`, or by `PUT` and `DELETE` on their URLs. A also runs the authorization server that `b` gets its tokens from, in a module of its own beside A's server module, so A's role module sees only verified claims.
-  - **A serves its folders and types as collections.** A `resources/read` of `.../server/A/notes/inbox` or `.../server/A/notes` returns one entry in `contents` per note under it. Folders nest to any depth, and A tells a note from a folder by the last segment: an id such as `note-42` or `list-7` names a resource, and anything else names a folder.
+- **A holds notes and lists.** Each one is an `https` resource, such as `.../server/A/notes/inbox/note-42`, which a client can read with `resources/read` or a plain `GET`, and which carries an `ETag` per version. Notes change through A's tools, `write_note` and `delete_note`, or by `PUT` and `DELETE` on their URLs. `write_note` takes an optional `version` that refuses a stale write, as `If-Match` does, and returns the new version (Claude, 2026-10-25, while Larry was away). Every write is checked against JSON Schema generated from `Note` or `List`, both closed, so a member that is `null` or unknown is refused. A also runs the authorization server that `b` gets its tokens from, in a module of its own beside A's server module, so A's role module sees only verified claims.
+  - **A serves its folders and types as collections.** A `resources/read` of `.../server/A/notes/inbox` or `.../server/A/notes` returns one entry in `contents` per note under it, and a plain `GET` of a folder returns its members' URIs with no `ETag`, since a collection has no version (Claude, 2026-10-25, while Larry was away). Folders nest to any depth, and A tells a note from a folder by the last segment: a segment that starts with the type's singular and a hyphen, such as `note-42` or `list-7`, names a resource, and the writer mints the rest, as a ULID in practice. Anything else names a folder.
+  - **A's core MCP methods are the ones the scenarios use:** `server/discover`, `tools/list`, `tools/call`, `resources/read`, `resources/list` and `resources/templates/list`. A read of a resource a client may subscribe to answers `ttlMs: 0`, so no cache serves a read older than the version a delivery named.
   - **`resources/templates/list` returns one template per type,** so each can describe its type, with reserved expansion, `{+path}`, which may span segments (Larry, 2026-10-25):
 
     ```jsonc
@@ -155,7 +156,7 @@ block-beta
 
     Every entry a read under a template returns is a JSON note or list, so each template can carry one `mimeType`. A type's root, as `.../server/A/notes`, is a collection A serves that neither template matches, since `{+path}` needs at least one character.
   - **`resources/list` returns the inbox's notes and every list,** so a `listed` target covers more than the inbox does, and an archived note is reachable only through a template.
-  - **A keeps every version of each resource, as rows stamped from one counter across A** (Larry, 2026-10-25), the way Lumenize's temporal model keeps them. A change adds a row, and a deletion adds one marked deleted. Scenario 10's rows after the cursor `c1` are:
+  - **A keeps every version of each resource, as rows stamped from one counter across A** (Larry, 2026-10-25). A change adds a row, and a deletion adds one marked deleted, as Lumenize's temporal model keeps a row per version and one for a deletion. The one counter across A is this design's: Lumenize's `validFrom` orders each resource on its own. A version is the row's stamp under the epoch, as `e2.17`, so no version is ever reused for a URI, and the examples write short per-resource labels, `v1` and `v2`, for reading. Scenario 10's rows after the cursor `c1` are:
 
     | Stamp | Resource | Version | Deleted |
     |---|---|---|---|
@@ -165,14 +166,14 @@ block-beta
     | `c5` | note-44 | `v1` | |
     | `c6` | note-43 | `v4` | yes |
 
-    A cursor is a stamp. A collection's catch-up from `c1` reads each resource's newest row past it, `c6` and `c5`, and a patch reads the row of the version a client names. A drops rows older than its cut-off window, a setting of A's, a day by default, which the tests shorten to reach a reset, but keeps each live resource's newest row. A cursor older than the rows A dropped gets a reset.
+    A cursor is a stamp. A collection's catch-up from `c1` reads each resource's newest row past it, `c6` and `c5`, and a patch reads the row of the version a client names. A drops rows older than its cut-off window as it writes, with no alarm, a setting of A's, a day by default, which the tests shorten to reach a reset, but keeps each live resource's newest row. It expires a subscription the same way, checking its grant lazily at delivery and sweeping expired ones when it wakes. A cursor older than the rows A dropped gets a reset.
   - **A list is the second type,** `{ "title": "Groceries", "items": ["oat milk"] }`, so that a template can match across types.
 - **B is a gateway, and stores nothing.** It receives webhooks for each of its clients at a URL of that client's own, `/gateway/B/hooks/{client}`, the path shape SEP-3415's own examples use, and passes each one down that client's WebSocket. Each socket carries its client's secret in its attachment, so B writes nothing, as Lumenize's Gateway writes nothing. B never calls A, and holds no principal there.
   - **SEP-3415 uses both words, gateway and forward proxy, sometimes in one paragraph,** as Appendix A's webhook mode does. This design says gateway. Unlike the proxy of § *Webhook-Based Delivery*, which serves events to its clients by poll or push and so buffers them, B passes each delivery straight down its client's socket and keeps none. Lumenize's Gateway also carries a client's calls up to the nodes, and this one carries only deliveries down, since `b` calls A itself.
   - **Nothing in B knows about notes,** and the same gateway serves both levels, since an Events occurrence and a level-2 change arrive with the same headers, signatures and verification.
 - **`b` is an MCP client of A that cannot receive a webhook,** as Claude Code on a laptop or a browser tab cannot. It holds the token, subscribes, refreshes, and keeps a copy of each resource it watches, at A's version. It can be a script in the early phases, but for the demo it runs in the browser, so its own messages are recorded where the demo shows them.
 - **The demo shows every message, and what each party holds.** `a` and `b` run in the browser, so their records are local to the page. A and B run on Cloudflare, so they report their contents and the messages they send and receive to the page via a WebSocket back channel.
-- **The page has two controls of its own so far, outside both SEPs,** sent to A and B over the same back channel. Larry has rehearsed the first beats, which brought in the Wipe, and the page's other controls wait for rehearsal after the build (Larry, 2026-10-25):
+- **The page has two controls of its own so far, outside both SEPs,** sent to A and B over the same back channel. Larry has rehearsed the first beats, which brought in the Wipe, and the page's other controls wait for rehearsal after the build (Larry, 2026-10-25). On a deployed Worker the controls need an operator token, held as a Worker secret, while the back channel's reports stay open to the page (Claude, 2026-10-25, while Larry was away):
   - **The Wipe button empties all four parties between the levels.** A loses its notes, subscriptions, verification cache, pending retries and OAuth client registrations, and starts a new epoch, so it refuses every token issued for A before. B closes its sockets. `a` and `b` register with A again, and `b` drops its copies, gets a new token for B's socket, reconnects to B and registers a new secret. An old token for B's socket still opens one, but only for a client id A no longer knows, which receives nothing. The page clears the messages it shows.
   - **A's retry schedule,** shown on screen: SEP-3415's bounds by default, and in the demo three attempts at 2, 4 and 8 seconds, so the audience sees a retry, and a newer version replacing a pending one, as they happen.
 - **Versions behave as HTTP's `ETag`s do.** A version is the resource's strong `ETag`, written without its quotes: `v2` on this extension's wire, `"v2"` in an HTTP header. Clients compare versions only for equality. A's versions need not sort in time, though they may, and a server that knows its own versions sort MAY rely on that inside its implementation. In the examples they are short strings, `v1` and `v2`, and each level's examples count from `v1`. A's versions never repeat across a Wipe, since A mints them under its epoch, a count of Wipes, as `e2.v1`, and the page shows the short form.
@@ -189,7 +190,7 @@ Neither SEP-3415 nor this extension says how a gateway reaches its client. SEP-3
 1. **`b` registers its secret first, on every connection,** with `{"secret": "whsec_..."}`, and B keeps it in the socket's attachment while the socket is open. The secret has to reach B before `b` subscribes, because A's verification challenge arrives at B while A is still handling the subscribe call. B answers that challenge itself, at once, from the secret it holds, without asking `b`.
 2. **B passes on each delivery whose signature verifies, answers `401` to one whose signature does not, and answers A straight away.** A send on a WebSocket does not wait for `b`, so B holds nothing while it answers. While `b`'s socket is closed, B answers `503`, one of the retryable answers SEP-3415 names for a receiver that is not ready.
 3. **B tracks nothing else.** A client that reconnects refreshes each of its subscriptions, so B never needs to know what it missed.
-4. **Who may connect is B's own business,** as it is any gateway's, and here B checks a token, in `routeDORequest`'s `onBeforeConnect`. The socket's path, `/gateway/B/ws/b`, names the client by its OAuth client id, as Lumenize's Gateway takes a client's id from its path. `b` gets a second token from A's authorization server, by one more pass through its instant consent, with B's socket URL as its only audience, so neither of `b`'s tokens works where the other does. `onBeforeConnect` checks the token's signature, expiry and audience, and that the path names the client it was issued to. B trusts A's authorization server only because both run in one Worker, and a gateway of a client's own would trust its own issuer. The page's back channel, which is the demo's and outside both SEPs, passes unchecked.
+4. **Who may connect is B's own business,** as it is any gateway's, and here B checks a token, in `routeDORequest`'s `onBeforeConnect`. The socket's path, `/gateway/B/ws/b`, names the client by its OAuth client id, as Lumenize's Gateway takes a client's id from its path. `b` gets a second token from A's authorization server, by one more pass through its instant consent, with B's socket URL as its only audience, so neither of `b`'s tokens works where the other does. `onBeforeConnect` checks the token's signature, expiry and audience, and that the path names the client it was issued to. B trusts A's authorization server only because both run in one Worker, and a gateway of a client's own would trust its own issuer. The page's back channel, which is the demo's and outside both SEPs, passes unchecked, though a control sent over it needs the operator token on a deployed Worker.
 
 ### Four ways to reach a resource
 
@@ -243,7 +244,7 @@ Several values in SEP-3415 and this design look alike: opaque strings a client i
   "ttlMs": 0, "cacheScope": "public" }      // read again whenever it matters
 ```
 
-- **Nothing in the result names a version,** so `b` cannot tell whether a later read returns the same note or a new one without comparing contents.
+- **Nothing in the result names a version,** so `b` cannot tell whether a later read returns the same note or a new one without comparing contents. The phase on resources outside `https` adds one, under a `_meta` key, to every read A serves.
 - **To hear about the next change, `b` would hold a `subscriptions/listen` stream open** with the note in its `resourceSubscriptions`. Holding a stream is what this work avoids, so the demo skips it.
 
 #### Scenario 1b: polling with plain HTTP
@@ -255,8 +256,9 @@ GET /server/A/notes/inbox/note-42      → 200, ETag: "v1"
                                          {"title":"Buy milk"}
 GET /server/A/notes/inbox/note-42      → 304 Not Modified
 If-None-Match: "v1"
-PUT /server/A/notes/inbox/note-42      → 200, ETag: "v2"   (a, the writer)
+PUT /server/A/notes/inbox/note-42      → 204, ETag: "v2"   (a, the writer)
 If-Match: "v1"
+Authorization: Bearer <a's token for A>
 {"title":"Buy milk","due":"2026-10-24"}
 GET /server/A/notes/inbox/note-42      → 200, ETag: "v2"
 If-None-Match: "v1"                      {"title":"Buy milk","due":"2026-10-24"}
@@ -264,6 +266,8 @@ If-None-Match: "v1"                      {"title":"Buy milk","due":"2026-10-24"}
 
 - **Here the version travels as HTTP writes an `ETag`,** quoted, as `"v2"`, where this extension's own wire writes `v2`.
 - **Polling is solved for `https` resources,** which is why this extension leaves polling out, for now. Without some way to push, it either polls often or learns late.
+- **A write follows RFC 9110.** A `PUT` under `If-None-Match: *` creates a note, answering `201` with its `ETag`. One under `If-Match` replaces it, answering `204` with the new `ETag`, or `412` when the version is stale. A `GET` of a deleted note answers `404`.
+- **Plain HTTP cannot watch a folder.** Polling note-42 never reveals a new note-43, and a folder's `GET` carries no `ETag`, so a client watching the inbox fetches the whole list each time.
 
 #### Scenario 2: `mcp.resource.updated` over Events
 
@@ -557,6 +561,8 @@ At 16:15, `a` creates note-43 in the inbox, and A delivers it through B like any
 - **`c1` and `c6` are opaque.** A server that stamps its versions from one counter MAY use the version as the cursor, as Kubernetes stamps an object's and a list's `resourceVersion` from etcd's one revision. `b` never compares either (R36).
 - **A cursor A can no longer serve gets every member, with `reset: true`,** as Scenario 10b shows. A forgets deletions older than its cut-off window, so for an older cursor it cannot say what was deleted. It lists every member that exists instead, and `b` drops any it holds that the reset does not list.
 - **A long catch-up comes in pages.** A result with `hasMore: true` stops partway, and `b` refreshes again with its `cursor`, as `events/poll` drains a backlog with `hasMore`. A reset pages the same way, its cursor then a place in the listing.
+- **WebDAV and CouchDB pair a cursor with member versions too.** RFC 6578's sync puts a collection's `sync-token` beside each member's `ETag` and reports a removed member as `404`, and CouchDB's `_changes` feed pairs a `seq` with each document's `_rev`, listing each changed document once. RFC 6578 answers a token it cannot serve with an error, the `DAV:valid-sync-token` precondition, after which the client "has to fall back to synchronizing the entire collection". This extension answers with the reset in the same result instead.
+- **A subscriber whose grant lapsed subscribes again the same way,** naming its last cursor, or for one resource its version, since R32 and R5 apply to any subscribe call. The key is unchanged, so the `id` is too (R25).
 - **This is how state-sync services catch up.** Dropbox's `cursor`, Drive's `pageToken`, Calendar's `syncToken`, Gmail's `historyId` and Graph's `deltaLink` are each a cursor the client holds. Dropbox, Calendar, Gmail and Graph answer one too old for them by having the client start over, as a reset does here.
 
 ##### Scenario 10b: a cursor too old to serve
@@ -595,7 +601,11 @@ For a resource whose contents are JSON, a delivery can carry an RFC 7396 merge p
 - **A delivery patches from the resource's previous version,** since A has no record of what `b` acknowledged (§ *Only the newest version matters*). A delivery that replaces a pending one keeps that one's starting version instead, which its entry in the retry queue still holds: when `v4` replaces a pending `v3` that was to patch from `v2`, `v4`'s patch starts from `v2` too (Larry, 2026-10-25). If the entry is gone, as after an eviction, the delivery patches from the previous version, and a receiver that lacks it catches up. This assumes a receiver is up to date unless a delivery to it is pending, which holds while an absence is no longer than the retries, and a longer absence ends in a catch-up anyway.
 - **A catch-up asked for as `patch` patches from the version `b` names,** or for a collection from each member's version at the cursor, and carries the full contents when A no longer keeps that version or the contents are not JSON. A patch names the version it starts from, so `b` applies one only when it holds that version, and otherwise catches up.
 - **HTTP's delta encoding works the same way.** RFC 3229's `A-IM` request header says which deltas a client accepts, and a `226 IM Used` response carries one.
-- **The predecessor designed the rest in detail,** and the mining pass brings its rules across.
+- **A patch is the field `mergePatch`,** leaving room for a `jsonPatch` later, and names the version it starts from beside the new `version`. A root that is not an object is replaced whole, as RFC 7396 says.
+- **What a patch's value is.** A resource whose `contents` holds one `application/json` text entry is patched on its parsed body. Any other resource, a created one, and a catch-up with no starting version all go as `full`.
+- **No value holds a `null` member,** since a merge patch reads `null` as a deletion. A's closed schemas refuse one, and a server whose values could hold one sends `full` for that change.
+- **In a collection's catch-up, a member whose patch starts from a version `b` does not hold** is read again by `b`, by `resources/read` or `GET`, rather than caught up again, since deliveries may have moved `b` past the cursor's version (Claude, 2026-10-25, while Larry was away).
+- **The code is copied, and tested by round trip.** A copies `applyMergePatch` and its helper `setOwn`, from `@lumenize/structured-clone`, which patch keys such as `__proto__` as plain data, and writes a plain-JSON `diff` that returns one patch or none. A test checks that `diff` then `applyMergePatch` gives back the new value, on RFC 7396's Appendix A vectors and the predecessor's extra ones.
 
 #### Resources without an `https` URI, in a later phase
 
@@ -703,15 +713,18 @@ type ResourceChange = { uri: string } & (
 - **SEP-3415's text is cited at the PR's head commit, b0efd11,** so a later revision cannot change the meaning of either level unnoticed.
 - **SEP-2133 binds the extension:** Apache-2.0, Extensions Track, and an official-SDK reference implementation before review.
 - **Cloudflare Workers and Durable Objects host the prototype,** under `critical.md`'s rules for storage, secrets and `compatibility_date`.
+- **The transport is 2026-07-28's Streamable HTTP, stateless and JSON only.** One message per POST, with no `initialize`, no `Mcp-Session-Id` and no SSE. Every request carries the `MCP-Protocol-Version` and `Mcp-Method` headers and the `_meta` envelope, and a request without the envelope is refused with `400` and `-32602`. The examples leave the envelope out.
+- **Test machinery never reaches the demo's Worker.** Conformance fixtures and fault switches run on a separate `test-*` Worker, behind a `CONFORMANCE` secret, never in `wrangler.jsonc`'s vars.
 
 ## Future state
 
 - ⚠️ Design consideration: **a webhook delivery SEP of its own.** Once a second extension takes SEP-3415's webhook delivery by reference, the delivery rules might be better in a SEP that both build on. The first sign is D1 in sep-notes.md: SEP-3415 reserves its webhook header and well-known paths for Events, and this extension reuses them. Not proposed now (Larry, 2026-10-21).
 - ⚠️ Design consideration: **delivery over a client's open stream.** Peter would rather extend `subscriptions/listen` than add a parallel stream (§ *Timing and political considerations*). If Felix's `extensions` member on `subscriptions/listen`'s filter lands, level 2 could also deliver over that stream, under this extension's identifier, to a client that holds one, without departing from SEP-3371. Until then, this extension stays off that stream.
 - **Hosting on an SDK.** The official-SDK implementation tests what SEP-3371's rules cannot: whether an extension's handlers learn of resource changes, the gap in § *Technical*, and whether its extension points carry outbound webhooks and timed retries.
-- **Tasks.** Open Question 6 and ext-tasks #24 ask for the same thing on task state, and a task exposed as a resource gets level 2 unchanged.
+- **Tasks.** Open Question 6 and ext-tasks #24 ask for the same thing on task state, and a task exposed as a resource gets level 2 unchanged, for one task. A folder or `listed` target over tasks would need scoping first: SEP-2663 removed `tasks/list` because a server cannot scope "all my tasks", as the predecessor's notes record.
 - **A mirror,** where a subscriber keeps copies at the server's versions and serves them to readers of its own, as the predecessor designed. The design covers a client behind a gateway instead.
-- **The other two flavors,** and the Lumenize port, whose notes stay in the predecessor's `tasks/lumenize-port.md`.
+- **The other two flavors,** and the Lumenize port, whose notes live in [lumenize-port.md](lumenize-port.md).
+- **Follow-ons the predecessor named,** none of them built here: Workers Issues read by a live Claude Code session, whose probed facts stay in the predecessor's master plan; B packaged as a gateway from webhooks to WebSockets for the Cloudflare community; and our clients against Sri's SDK implementation of Events, and his against ours, once his lands.
 - ⚠️ Design consideration: **a JSON Schema per type, in the template's `_meta`.** The Lumenize port will add one (Larry, 2026-10-25). Its use is less as a safety check, since one party writes both sides, than as a feedback loop: a client checks its own inputs, such as a UI's, against the same schema the server enforces, before it sends them.
 
 ## Open questions
