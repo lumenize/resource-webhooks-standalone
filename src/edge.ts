@@ -3,6 +3,7 @@
 // does not list is 404, and a method it does not list for a path it does is 405.
 import { mcpEndpoint, authorizationServerMetadata, protectedResourceMetadata, resourceMetadataUrl } from './auth/metadata';
 import { verifyToken } from './auth/signing';
+import { readCapped } from './read-capped';
 import {
   addCorsHeaders,
   applyCorsPolicy,
@@ -31,6 +32,9 @@ const SERVER_ROUTES: readonly Route[] = [
   { path: /^\/mcp$/, methods: ['POST'], token: ['POST'] },
   { path: /^\/(notes|lists)(\/.*)?$/, methods: ['GET', 'HEAD', 'PUT', 'DELETE'], token: ['PUT', 'DELETE'] },
 ];
+
+/** The largest body the authorization server's routes take, far more than any of them needs. */
+const AUTHORIZATION_BODY_CAP = 16 * 1024;
 
 /** The authorization server's routes, which the Worker hands to A by hand, and their methods. */
 const AUTHORIZATION_ROUTES: ReadonlyMap<string, string> = new Map([
@@ -94,8 +98,16 @@ async function authorizationRoute(request: Request, env: Env): Promise<Response 
   const method = AUTHORIZATION_ROUTES.get(pathname);
   if (!method) return undefined;
   if (request.method !== method) return new Response('Method Not Allowed', { status: 405, headers: { Allow: method } });
+  // A parses these bodies, so a large one is refused before it wakes A.
+  const declared = Number(request.headers.get('Content-Length') ?? 0);
+  let body: ArrayBuffer | undefined;
+  if (method === 'POST') {
+    const bytes = declared > AUTHORIZATION_BODY_CAP ? undefined : await readCapped(request.body, AUTHORIZATION_BODY_CAP);
+    if (!bytes) return new Response('Content Too Large', { status: 413 });
+    body = bytes.slice().buffer;
+  }
   // A's authorization endpoint redirects, and its redirect is for the client to follow.
-  return env.SERVER.getByName(env.SERVER_INSTANCE).fetch(new Request(request, { redirect: 'manual' }));
+  return env.SERVER.getByName(env.SERVER_INSTANCE).fetch(new Request(request, { redirect: 'manual', body }));
 }
 
 function metadataGuard(request: Request): Response | undefined {

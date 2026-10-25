@@ -36,6 +36,10 @@ export class AuthorizationServer {
   readonly #options: AuthorizationServerOptions;
 
   constructor(options: AuthorizationServerOptions) {
+    // A cap that is not a positive integer would bound nothing, so A refuses to start without one.
+    if (!Number.isInteger(options.registrationCap) || options.registrationCap < 1) {
+      throw new RangeError(`The registration cap must be a positive integer, not ${options.registrationCap}`);
+    }
     this.#sql = options.sql;
     this.#options = options;
     options.sql.exec(`
@@ -52,11 +56,22 @@ export class AuthorizationServer {
     } catch {
       return oauthError(400, 'invalid_client_metadata', 'The body is not JSON');
     }
+    if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) {
+      return oauthError(400, 'invalid_client_metadata', 'The body is not a JSON object');
+    }
     const uris = metadata.redirect_uris;
     if (!Array.isArray(uris) || uris.length !== 1 || typeof uris[0] !== 'string') {
       return oauthError(400, 'invalid_redirect_uri', 'Register exactly one redirect URI');
     }
     const redirectUri = uris[0];
+    let parsed: URL;
+    try {
+      parsed = new URL(redirectUri);
+    } catch {
+      return oauthError(400, 'invalid_redirect_uri', 'The redirect URI is not a URL');
+    }
+    // RFC 6749 § 3.1.2: a redirect URI has no fragment.
+    if (parsed.hash || redirectUri.includes('#')) return oauthError(400, 'invalid_redirect_uri', 'A redirect URI has no fragment');
     if (!redirectUri.startsWith(`${this.#options.origin}/`) && !LOOPBACK.test(redirectUri)) {
       return oauthError(400, 'invalid_redirect_uri', "A redirect URI must be on this server's origin or loopback");
     }
@@ -101,7 +116,8 @@ export class AuthorizationServer {
     }
     const back = new URL(redirectUri);
     const state = params.get('state');
-    const fail = (error: string, description: string) => redirect(back, { error, error_description: description, state });
+    // RFC 9207: the issuer goes on every response, an error's included.
+    const fail = (error: string, description: string) => redirect(back, { error, error_description: description, state, iss: this.#options.origin });
     if (params.get('response_type') !== 'code') return fail('unsupported_response_type', 'Only the code flow is supported');
     const challenge = params.get('code_challenge');
     if (!challenge || params.get('code_challenge_method') !== 'S256') {
@@ -138,7 +154,8 @@ export class AuthorizationServer {
     const clientId = form.get('client_id') ?? '';
     const clientSecret = form.get('client_secret') ?? '';
     const secretValid = (await this.#validClientId(clientId)) && (await verifyMac(this.#options.secret, 'client-secret', clientId, clientSecret));
-    if (!secretValid) return oauthError(401, 'invalid_client', 'The client id and secret do not verify');
+    // 400, which RFC 6749 § 5.2 allows for a client that authenticates in the body, as here.
+    if (!secretValid) return oauthError(400, 'invalid_client', 'The client id and secret do not verify');
 
     const claims = await this.#codeClaims(form.get('code') ?? '');
     if (!claims) return oauthError(400, 'invalid_grant', 'The code is not one this server issued, or has expired');

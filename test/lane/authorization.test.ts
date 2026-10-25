@@ -1,7 +1,8 @@
-import { listDurableObjectIds } from 'cloudflare:test';
+import { listDurableObjectIds, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { base64url, signToken, type TokenClaims } from '../../src/auth/signing';
+import { AuthorizationServer } from '../../src/auth/authorization-server';
+import { base64url, sha256, signToken, type TokenClaims } from '../../src/auth/signing';
 import { callWorker, newLane, type Lane } from './lane';
 
 const ENVELOPE = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} };
@@ -139,7 +140,12 @@ describe('tokens at the edge', () => {
 
   it('refuses a token issued in an earlier epoch, which only A can tell', async () => {
     const lane = newLane();
-    const earlier = await signToken(env.TOKEN_SIGNING_KEY, claimsFor(lane, { epoch: 1 }));
+    const earlier = await signToken(env.TOKEN_SIGNING_KEY, claimsFor(lane, { epoch: 0 }));
+    expect((await toolsList(lane, earlier)).status).toBe(200);
+    // Below the public API: phase 4's Wipe raises the epoch, and until then only a write by hand can.
+    await runInDurableObject(lane.stub, (_instance, state) => {
+      state.storage.sql.exec('INSERT OR REPLACE INTO Epoch (id, value) VALUES (1, 1)');
+    });
     const response = await toolsList(lane, earlier);
     expect(await response.json()).toEqual({ error: 'invalid_token', error_description: 'The token was issued before the last Wipe' });
     expect(response.status).toBe(401);
@@ -176,8 +182,8 @@ describe('the authorization server', () => {
     const code = await codeFor(lane, first.clientId, challenge);
     const base = { code, code_verifier: verifier, resource: `${lane.root}/mcp` };
 
-    expect(await errorOf(await redeem(lane, { ...base, client_id: first.clientId }))).toEqual({ status: 401, error: 'invalid_client' });
-    expect(await errorOf(await redeem(lane, { ...base, client_id: first.clientId, client_secret: second.clientSecret }))).toEqual({ status: 401, error: 'invalid_client' });
+    expect(await errorOf(await redeem(lane, { ...base, client_id: first.clientId }))).toEqual({ status: 400, error: 'invalid_client' });
+    expect(await errorOf(await redeem(lane, { ...base, client_id: first.clientId, client_secret: second.clientSecret }))).toEqual({ status: 400, error: 'invalid_client' });
     // Another client's own credentials verify, but the code was not issued to it.
     expect(await errorOf(await redeem(lane, { ...base, client_id: second.clientId, client_secret: second.clientSecret }))).toEqual({ status: 400, error: 'invalid_grant' });
     expect((await redeem(lane, { ...base, client_id: first.clientId, client_secret: first.clientSecret })).status).toBe(200);
@@ -189,7 +195,9 @@ describe('the authorization server', () => {
     const base = { response_type: 'code', client_id: clientId, redirect_uri: REDIRECT, state: 's', resource: `${lane.root}/mcp` };
     for (const challenge of [{}, { code_challenge: 'abc', code_challenge_method: 'plain' }, { code_challenge: 'abc' }]) {
       const response = await authorize(lane, { ...base, ...(challenge as Record<string, string>) });
-      expect({ challenge, error: new URL(response.headers.get('Location')!).searchParams.get('error') }).toEqual({ challenge, error: 'invalid_request' });
+      const back = new URL(response.headers.get('Location')!).searchParams;
+      // RFC 9207 puts the issuer on an error response too.
+      expect({ challenge, error: back.get('error'), iss: back.get('iss') }).toEqual({ challenge, error: 'invalid_request', iss: env.ORIGIN });
     }
     const { challenge } = await pkce();
     const code = await codeFor(lane, clientId, challenge);
@@ -251,10 +259,74 @@ describe('the authorization server', () => {
     expect((await codeFor(lane, clientId, challenge, `${env.ORIGIN}/gateway/B/ws/${clientId}`)).length).toBeGreaterThan(0);
   });
 
+  it('never redirects for a client id whose signature does not verify, however it is shaped', async () => {
+    const lane = newLane();
+    const evil = 'https://evil.example/callback';
+    const { clientId } = await register(lane);
+    const [epoch, , nonce, signature] = clientId.split('.');
+    const forged = `${epoch}.${(await sha256(evil)).slice(0, 22)}.${nonce}.${signature}`;
+    const { challenge } = await pkce();
+    const response = await authorize(lane, {
+      response_type: 'code',
+      client_id: forged,
+      redirect_uri: evil,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      resource: `${lane.root}/mcp`,
+    });
+    expect(await errorOf(response.clone())).toEqual({ status: 400, error: 'invalid_client' });
+    expect(response.headers.get('Location')).toBeNull();
+  });
+
+  it('refuses a code redeemed after its minute', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const lane = newLane();
+    const { clientId, clientSecret } = await register(lane);
+    const { verifier, challenge } = await pkce();
+    const code = await codeFor(lane, clientId, challenge);
+    vi.setSystemTime(Date.now() + 61_000);
+    const late = await redeem(lane, { code, code_verifier: verifier, client_id: clientId, client_secret: clientSecret });
+    expect(await errorOf(late)).toEqual({ status: 400, error: 'invalid_grant' });
+  });
+
+  it('refuses a registration that is not a JSON object, or whose redirect URI has a fragment or is no URL', async () => {
+    const lane = newLane();
+    const post = (body: string) => call(lane, '/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    expect(await errorOf(await post('null'))).toEqual({ status: 400, error: 'invalid_client_metadata' });
+    for (const uri of [`${REDIRECT}#here`, 'http://localhost:99999/callback']) {
+      expect({ uri, ...(await errorOf((await register(lane, uri)).response)) }).toEqual({ uri, status: 400, error: 'invalid_redirect_uri' });
+    }
+  });
+
+  it('refuses a body over 16 KiB on its routes before A wakes', async () => {
+    const lane = newLane();
+    const before = await serverIds();
+    const response = await call(lane, '/register', { method: 'POST', body: JSON.stringify({ redirect_uris: [REDIRECT], pad: 'x'.repeat(17 * 1024) }) });
+    expect(response.status).toBe(413);
+    expect(await serverIds()).toEqual(before);
+  });
+
   it('refuses a cross-origin POST to the token endpoint with 403', async () => {
     const lane = newLane();
     const response = await call(lane, '/token', { method: 'POST', headers: { Origin: 'https://evil.example' }, body: 'grant_type=authorization_code' });
     expect(response.status).toBe(403);
+  });
+
+  it('refuses to start with a registration cap that is not a positive integer', async () => {
+    const lane = newLane();
+    // Below the public API: the cap comes from a binding, so only a server built by hand can be
+    // given a bad one.
+    const names = await runInDurableObject(lane.stub, (_instance, state) =>
+      [NaN, 0, 1.5].map((registrationCap) => {
+        try {
+          new AuthorizationServer({ sql: state.storage.sql, secret: 's', origin: env.ORIGIN, epoch: () => 0, resourcesFor: () => [], registrationCap });
+          return 'started';
+        } catch (error) {
+          return (error as Error).name;
+        }
+      }),
+    );
+    expect(names).toEqual(['RangeError', 'RangeError', 'RangeError']);
   });
 
   it('answers 429 past the registration cap', async () => {

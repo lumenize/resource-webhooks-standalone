@@ -831,13 +831,13 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 3. **The authorization server, and tokens at the edge.** This gives every client its own principal, so subscriptions are keyed by who asked.
    - **Builds:**
      - the authorization server of § *Who may subscribe*, stateless, in a module of its own, with its metadata served by the Worker without waking A
-     - `onBeforeRequest` on A's routes, by the route table, setting the verified principal in the claims header and stripping that header from every request it did not verify
+     - `onBeforeRequest` on A's routes, by the route table, stripping the claims header from every request and setting it to the verified token's claims
      - `mcp-client.ts`, the client module `a`, `b` and the tests share, using only `fetch` and Web Crypto
      - the client side of the conformance suite for `b`, `npm run conformance:client`, driving `mcp-client.ts` through `scripts/conformance-client.mjs`, which Node runs with its types stripped, and listing the checks it does not pass in the baseline with reasons
    - **Success criteria:**
      - A call to A's MCP endpoint without a token answers `401` with `WWW-Authenticate` carrying `resource_metadata`, and A's MCP handler sees nothing. Mutation: let it through.
      - A token with a bad signature, one past its expiry under `vi.setSystemTime`, and `b`'s real token for B's socket each answer `401`, and A's handler sees nothing. The first two are minted with a test helper holding the signing secret, since a real one cannot be made bad. Mutation: drop each check in turn.
-     - A request that arrives with the claims header already set, and no token, is treated as anonymous. Mutation: trust the inbound header.
+     - A request that arrives with the claims header already set, and no token, is treated as anonymous. Mutation: trust the inbound header. Stripping the header from a request that needs no token is defence in depth that no route yet observes, since none reads a principal without one.
      - A code redeemed without its client's `client_secret`, or with another client's secret, answers `invalid_client`, and one redeemed by another client with its own credentials answers `invalid_grant`, as RFC 6749 says. Mutation: accept a public client.
      - A missing or `plain` code challenge is refused, and a wrong verifier is refused. Mutation: skip the PKCE check.
      - A code works once, and only with the `client_id`, `redirect_uri` and `resource` it was issued for. Mutation: accept a second redemption.
@@ -1031,6 +1031,8 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 
 **For Larry.**
 
+- **One criterion changed, to follow RFC 6749:** a code redeemed by another client with its own valid credentials answers `invalid_grant`, not `invalid_client`, since those credentials do authenticate it.
+- **What a free registration buys is bounded only in part.** The three limits the plan names cap registrations, subscriptions and verification POSTs, but a registered client can still `PUT` notes of up to 1 MiB, each kept a day, and redeem codes, each a write. And anyone can spend the cap of 1000 registrations and lock `a` and `b` out until the next Wipe. I'd accept both for a demo that the Wipe resets, and say so in the proposal's security notes, unless you'd rather cap writes per principal too.
 - **MCP 2026-07-28 deprecates Dynamic Client Registration,** the `/register` flow this authorization server offers, in favour of Client ID Metadata Documents. The plan's confidential clients depend on registration issuing a secret, so `/register` stays. A working-group reader may still notice a deprecated flow in the demo. Moving to CIMD would mean public clients identified by an `https` URL each hosts, with PKCE alone binding a code to its client, and that is your call if you want it.
 
 **Retro.**
@@ -1040,6 +1042,14 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 - **A `Request` built in a test follows redirects,** so the Durable Object stub followed A's own `302` from `/authorize` and answered whatever the redirect target did. An incoming request is `manual` when deployed, but the edge now forwards the authorization routes with `redirect: 'manual'` itself.
 - **Every lane test now signs in through the real flow,** registering, authorizing and redeeming a code for its own A, and the harness tests do the same through `test/harness/sign-in.ts`.
 - **19 mutations of the server side and 2 of the client, all caught,** the client's by the suite's own client run.
+
+- **The verifier failed the first tree on three major issues and nine minor ones, all fixed, with 14 more mutations, all caught:**
+  - The client never read `code_challenge_methods_supported`, which MCP says a client must refuse to go on without, and it would have sent pre-registered credentials to whichever authorization server a resource's metadata named. They are bound to their issuer now.
+  - No test presented a client id of the right shape with a bad signature, the only thing between `/authorize` and an open redirect, and none let a code expire. The epoch test presented a token from a later epoch, not an earlier one.
+  - Error redirects lacked `iss`, which RFC 9207 puts on every response, and the client read an error before checking `iss`.
+  - A `null` registration body, a redirect URI with a fragment or a bad port, and a cap that is not a number each answered `500` or bound nothing. The routes A parses by hand had no body cap, so they take 16 KiB, checked before A wakes.
+  - `invalid_client` at the token endpoint answers `400`, which RFC 6749 allows for a client that authenticates in the body, since a `401` needs `WWW-Authenticate`.
+  - The client registers again, once, when a server has forgotten it, as after a Wipe, and never follows a redirect, since Workers has no `redirect: 'error'`.
 
 **Close-out.**
 

@@ -73,7 +73,9 @@ export function createMcpClient({ endpoint, clientInfo, oauth, fetch: send = fet
       if (source && typeof params[source] === 'string') headers['Mcp-Name'] = headerValue(params[source] as string);
       const body = JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, _meta: meta } });
       const post = (token: string | undefined) =>
-        send(endpoint, { method: 'POST', headers: token ? { ...headers, Authorization: `Bearer ${token}` } : headers, body });
+        // A redirect would carry the token on to wherever it points, so none is followed, and a
+        // 3xx fails as any answer without a result does. Workers offers no "error" mode.
+        send(endpoint, { method: 'POST', headers: token ? { ...headers, Authorization: `Bearer ${token}` } : headers, body, redirect: 'manual' });
 
       let response = await post(oauth?.cachedToken(endpoint));
       // A 401 asks for a token, and a 403 naming insufficient_scope for one with more scope.
@@ -109,6 +111,8 @@ export function headerValue(value: string): string {
 // registration, the code flow with PKCE, and a token for exactly the resource the metadata names.
 
 export interface ClientCredentials {
+  /** The authorization server that issued them. Without it, they are bound to the first one met. */
+  issuer?: string;
   clientId: string;
   clientSecret?: string;
 }
@@ -117,12 +121,13 @@ export interface OAuthOptions {
   /** The redirect URI the client registers and is sent back to. */
   redirectUri: string;
   clientName?: string;
-  /** Credentials registered beforehand, used in place of registering. */
+  /** Credentials registered beforehand, used in place of registering, with their issuer only. */
   client?: ClientCredentials;
   /**
    * Opens the authorization URL and answers the URL the authorization server sent the browser
-   * back to. The default follows the first redirect with `fetch`, which works where consent is
-   * granted at once, as it is here.
+   * back to. The default reads the first redirect with `fetch`, which works in a script where
+   * consent is granted at once, as it is here. A browser page passes its own, since a page's
+   * fetch cannot read a redirect.
    */
   authorize?: (url: string) => Promise<string>;
   fetch?: typeof fetch;
@@ -134,14 +139,18 @@ interface ServerMetadata {
   token_endpoint: string;
   registration_endpoint?: string;
   token_endpoint_auth_methods_supported?: string[];
+  code_challenge_methods_supported?: string[];
   authorization_response_iss_parameter_supported?: boolean;
 }
 
-/** A step of the authorization flow that failed, saying what the server answered. */
+/** A step of the authorization flow that failed, with the OAuth `error` the server answered, if any. */
 export class OAuthError extends Error {
-  constructor(message: string) {
+  readonly error?: string;
+
+  constructor(message: string, error?: string) {
     super(message);
     this.name = 'OAuthError';
+    this.error = error;
   }
 }
 
@@ -151,7 +160,8 @@ export class OAuthSession {
   readonly #options: OAuthOptions;
   readonly #fetch: typeof fetch;
   // Credentials per issuer, since a client id is unique to the server that issued it.
-  readonly #clients = new Map<string, ClientCredentials & { method: string }>();
+  readonly #clients = new Map<string, ClientCredentials & { method: string; registered: boolean }>();
+  #preRegisteredIssuer: string | undefined;
   // Tokens per endpoint or resource they were got for, and the scope each was asked for.
   readonly #tokens = new Map<string, string>();
   readonly #scopes = new Map<string, Set<string>>();
@@ -198,7 +208,14 @@ export class OAuthSession {
   async tokenForResource(issuer: string, resource: string, scope?: string): Promise<string> {
     const server = await this.#serverMetadata(issuer);
     const client = await this.#client(server);
-    return this.#codeFlow(server, client, resource, scope);
+    try {
+      return await this.#codeFlow(server, client, resource, scope);
+    } catch (error) {
+      // A server that forgot this client, as after a Wipe, is registered with again, once.
+      if (!(error instanceof OAuthError) || error.error !== 'invalid_client' || !client.registered) throw error;
+      this.#clients.delete(server.issuer);
+      return this.#codeFlow(server, await this.#client(server), resource, scope);
+    }
   }
 
   /** The client id this session registered with `issuer`, once it has. */
@@ -237,24 +254,33 @@ export class OAuthSession {
       const metadata = (await response.json()) as ServerMetadata;
       // RFC 8414 § 3.3: metadata for another issuer must not be used.
       if (metadata.issuer !== issuer) throw new OAuthError(`Metadata at ${candidate} names the issuer ${metadata.issuer}, not ${issuer}`);
+      // MCP requires PKCE, and a server that does not say it offers S256 may not.
+      if (!metadata.code_challenge_methods_supported?.includes('S256')) {
+        throw new OAuthError(`The authorization server at ${issuer} does not say it offers PKCE with S256`);
+      }
       return metadata;
     }
     throw new OAuthError(`No authorization server metadata for ${issuer}`);
   }
 
-  async #client(server: ServerMetadata): Promise<ClientCredentials & { method: string }> {
+  async #client(server: ServerMetadata): Promise<ClientCredentials & { method: string; registered: boolean }> {
     const known = this.#clients.get(server.issuer);
     if (known) return known;
     // RFC 8414 says client_secret_basic is the default when the server lists none.
     const supported = server.token_endpoint_auth_methods_supported ?? ['client_secret_basic'];
     const method = AUTH_METHODS.find((candidate) => supported.includes(candidate)) ?? supported[0];
-    let client: ClientCredentials & { method: string };
-    if (this.#options.client) {
-      client = { ...this.#options.client, method: this.#options.client.clientSecret ? method : 'none' };
+    let client: ClientCredentials & { method: string; registered: boolean };
+    const preRegistered = this.#options.client;
+    // Credentials issued by one authorization server are never sent to another.
+    const issuerOfPreRegistered = preRegistered?.issuer ?? this.#preRegisteredIssuer ?? server.issuer;
+    if (preRegistered && issuerOfPreRegistered === server.issuer) {
+      this.#preRegisteredIssuer = server.issuer;
+      client = { ...preRegistered, method: preRegistered.clientSecret ? method : 'none', registered: false };
     } else {
       if (!server.registration_endpoint) throw new OAuthError('The authorization server offers no registration');
       const response = await this.#fetch(server.registration_endpoint, {
         method: 'POST',
+        redirect: 'manual',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           redirect_uris: [this.#options.redirectUri],
@@ -268,13 +294,13 @@ export class OAuthSession {
       });
       if (!response.ok) throw new OAuthError(`Registration failed with ${response.status}: ${await response.text()}`);
       const registered = (await response.json()) as { client_id: string; client_secret?: string; token_endpoint_auth_method?: string };
-      client = { clientId: registered.client_id, clientSecret: registered.client_secret, method: registered.token_endpoint_auth_method ?? method };
+      client = { clientId: registered.client_id, clientSecret: registered.client_secret, method: registered.token_endpoint_auth_method ?? method, registered: true };
     }
     this.#clients.set(server.issuer, client);
     return client;
   }
 
-  async #codeFlow(server: ServerMetadata, client: ClientCredentials & { method: string }, resource: string, scope: string | undefined): Promise<string> {
+  async #codeFlow(server: ServerMetadata, client: ClientCredentials & { method: string; registered: boolean }, resource: string, scope: string | undefined): Promise<string> {
     const verifier = randomBase64url(32);
     const state = randomBase64url(16);
     const authorization = new URL(server.authorization_endpoint);
@@ -292,13 +318,14 @@ export class OAuthSession {
 
     const back = new URL(await (this.#options.authorize ?? ((url) => this.#followRedirect(url)))(authorization.href));
     if (back.searchParams.get('state') !== state) throw new OAuthError('The authorization response carries another state');
-    const error = back.searchParams.get('error');
-    if (error) throw new OAuthError(`Authorization failed: ${error} ${back.searchParams.get('error_description') ?? ''}`.trim());
-    // RFC 9207: an issuer in the response must be the one asked, and must be there if promised.
+    // RFC 9207: an issuer in the response must be the one asked, and must be there if promised,
+    // and until it checks out, nothing else in the response is acted on, an error included.
     const iss = back.searchParams.get('iss');
     if (iss !== null ? iss !== server.issuer : server.authorization_response_iss_parameter_supported) {
       throw new OAuthError('The authorization response names another issuer, or none');
     }
+    const error = back.searchParams.get('error');
+    if (error) throw new OAuthError(`Authorization failed: ${error} ${back.searchParams.get('error_description') ?? ''}`.trim(), error);
     const code = back.searchParams.get('code');
     if (!code) throw new OAuthError('The authorization response carries no code');
 
@@ -315,8 +342,11 @@ export class OAuthSession {
     if (client.method === 'client_secret_basic' && client.clientSecret) {
       headers.Authorization = `Basic ${btoa(`${encodeURIComponent(client.clientId)}:${encodeURIComponent(client.clientSecret)}`)}`;
     }
-    const response = await this.#fetch(server.token_endpoint, { method: 'POST', headers, body: form.toString() });
-    if (!response.ok) throw new OAuthError(`The token request failed with ${response.status}: ${await response.text()}`);
+    const response = await this.#fetch(server.token_endpoint, { method: 'POST', headers, body: form.toString(), redirect: 'manual' });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new OAuthError(`The token request failed with ${response.status}: ${text}`, oauthErrorCode(text));
+    }
     const { access_token: token } = (await response.json()) as { access_token?: string };
     if (!token) throw new OAuthError('The token response carries no access_token');
     return token;
@@ -326,9 +356,19 @@ export class OAuthSession {
     const response = await this.#fetch(url, { redirect: 'manual' });
     const location = response.headers.get('Location');
     if (response.status < 300 || response.status >= 400 || !location) {
-      throw new OAuthError(`The authorization endpoint answered ${response.status} without a redirect: ${await response.text()}`);
+      const text = await response.text();
+      throw new OAuthError(`The authorization endpoint answered ${response.status} without a redirect: ${text}`, oauthErrorCode(text));
     }
     return new URL(location, url).href;
+  }
+}
+
+function oauthErrorCode(text: string): string | undefined {
+  try {
+    const { error } = JSON.parse(text) as { error?: unknown };
+    return typeof error === 'string' ? error : undefined;
+  } catch {
+    return undefined;
   }
 }
 
