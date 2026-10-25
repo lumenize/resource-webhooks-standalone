@@ -20,7 +20,7 @@ export interface Tier {
   heartbeatMs: number;
   /** What the page's controls carry, if this tier has one. */
   operatorToken?: string;
-  /** Sends a request to the Worker, as fetch does, without following a redirect itself. */
+  /** Sends a request to the Worker, as fetch does, and returns a redirect rather than following it. */
   send(request: Request): Promise<Response>;
   /** Opens a socket to the Worker offering these subprotocols, and resolves once it is open. */
   connect(url: string, protocols: string[]): Promise<Socket>;
@@ -36,16 +36,33 @@ export interface Socket {
   onClose(listener: (code: number, reason: string) => void): void;
 }
 
-/** A tier's Socket over a standard WebSocket that is already open. */
-export function socketOf(socket: WebSocket, protocol: string): Socket {
+/**
+ * A tier's Socket over a standard WebSocket, made before it opens. A message that arrives before
+ * anything listens waits, since a greeting can come as the socket opens. One listener at a time.
+ */
+export function socketOf(socket: WebSocket, protocol: () => string): Socket {
+  const waiting: string[] = [];
+  let deliver: ((data: string) => void) | undefined;
+  socket.addEventListener('message', (event) => {
+    if (deliver) deliver(event.data as string);
+    else waiting.push(event.data as string);
+  });
   return {
-    protocol,
+    get protocol() {
+      return protocol();
+    },
     send: (data) => socket.send(data),
     close: (code, reason) => socket.close(code, reason),
-    onMessage: (listener) => socket.addEventListener('message', (event) => listener(event.data as string)),
+    onMessage(listener) {
+      deliver = listener;
+      for (const data of waiting.splice(0)) listener(data);
+    },
     onClose: (listener) => socket.addEventListener('close', (event) => listener(event.code, event.reason)),
   };
 }
+
+/** How long a party waits for something that crosses the network, as an answer on a socket. */
+export const NETWORK_WAIT = { timeout: 10_000, interval: 20 };
 
 export interface Party {
   client: McpClient;
@@ -110,7 +127,7 @@ export async function listen(tier: Tier, party: Party, { secret = newSecret(), t
   });
   socket.send(JSON.stringify({ secret }));
   // b subscribes only once B has stored its secret, since A's challenge reaches B first.
-  await vi.waitFor(() => expect(messages.find(({ type }) => type === 'secret-registered' || type === 'secret-refused')).toEqual({ type: 'secret-registered' }));
+  await vi.waitFor(() => expect(messages.find(({ type }) => type === 'secret-registered' || type === 'secret-refused')).toEqual({ type: 'secret-registered' }), NETWORK_WAIT);
   return {
     closes,
     secret,
@@ -176,7 +193,7 @@ export async function watch(tier: Tier, party: 'A' | 'B'): Promise<Page> {
           .slice(before)
           .find((message) => ['done', 'refused', 'unknown'].includes(message.type as string) && message.action === action);
         expect(answer).toBeDefined();
-      });
+      }, NETWORK_WAIT);
       return answer!;
     },
     close: () => socket.close(1000, 'Done'),

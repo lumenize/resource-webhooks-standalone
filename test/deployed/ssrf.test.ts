@@ -1,7 +1,7 @@
 // The SSRF measurement rerun through A's own delivery path: each handshake a subscribe makes is
 // A's https POST from a Durable Object, to a name that sslip.io, nip.io or 1u.ms resolves. A
-// reports how each challenge was answered on its back channel, Cloudflare's refusal code among
-// it, and `results/ssrf-outcomes.json` keeps the run's outcomes for sep-notes.md.
+// reports on its back channel why each challenge failed, by the error code of Cloudflare's own
+// page or the failure, and `results/ssrf-outcomes.json` keeps the run's outcomes for sep-notes.md.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { McpError } from '../../src/client/mcp-client';
@@ -12,8 +12,7 @@ import { deployedTier } from './tier';
 interface Outcome {
   url: string;
   reason?: string;
-  status?: number;
-  refusal?: number;
+  errorCode?: number;
   failure?: string;
 }
 
@@ -28,11 +27,12 @@ async function handshake(tier: Tier, b: Party, page: Page, url: string): Promise
     report = page.reports().slice(before).find((each) => each.kind === 'verification' && each.url === url);
     expect(report).toBeDefined();
   });
-  const { status, refusal, failure } = report as unknown as Outcome;
-  return { url, reason: (error?.data as { reason?: string } | undefined)?.reason, status, refusal, failure };
+  const { errorCode, failure } = report as unknown as Outcome;
+  return { url, reason: (error?.data as { reason?: string } | undefined)?.reason, errorCode, failure };
 }
 
-// Each name and the code Cloudflare answers A's POST to it with, as sep-notes.md records.
+// Each name and the error code of the page Cloudflare answers A's POST to it with, as sep-notes.md
+// records.
 const REFUSED: [string, number][] = [
   ...['127.0.0.1', '10.0.0.1', '172.16.0.1', '192.168.0.1', '169.254.169.254', '0.0.0.0', '255.255.255.255', '0--1', 'fc00--1', 'fe80--1'].map(
     (address): [string, number] => [`${address}.sslip.io`, 1016],
@@ -46,8 +46,8 @@ const REFUSED: [string, number][] = [
   ['127.0.0.1', 1003],
   ['localhost', 1003],
 ];
-// Reached: Cloudflare connected, and refused the certificate, which is Google's or its own, not
-// the name's, with 526.
+// Reached: Cloudflare connected, and its page names 526, since the certificate is Google's or its
+// own, not the name's.
 const REACHED = ['142.251.156.119.sslip.io', '142.251.156.119.nip.io', '1.1.1.1.sslip.io'];
 const TIMED_OUT = ['192.0.0.1.sslip.io', '192.0.0.8.sslip.io', '192.0.2.1.sslip.io'];
 
@@ -57,30 +57,33 @@ describe("SSRF through A's handshake", () => {
     const page = await watch(tier, 'A');
     const b = await signedIn(tier, 'b');
     const outcome = (name: string) => handshake(tier, b, page, `https://${name}/hook`);
-    const outcomes: Outcome[] = [];
-    const record = async (name: string) => {
-      const each = await outcome(name);
-      outcomes.push(each);
-      return each;
-    };
-
-    for (const [name, code] of REFUSED) {
-      expect({ name, ...(await record(name)) }).toMatchObject({ name, reason: 'challenge_failed', refusal: code });
-    }
-    for (const name of REACHED) expect({ name, ...(await record(name)) }).toMatchObject({ name, reason: 'challenge_failed', status: 526 });
-    for (const name of TIMED_OUT) expect({ name, ...(await record(name)) }).toMatchObject({ name, reason: 'timeout', failure: 'timeout' });
-
+    const refused: Outcome[] = [];
+    for (const [name] of REFUSED) refused.push(await outcome(name));
+    const reached: Outcome[] = [];
+    for (const name of REACHED) reached.push(await outcome(name));
+    const timedOut: Outcome[] = [];
+    for (const name of TIMED_OUT) timedOut.push(await outcome(name));
     // Each name is new, so Cloudflare resolves it afresh. 1u.ms answers Google's address once and
-    // 10.0.0.1 after it, so a fetch that looks the name up again sees the private answer.
+    // 10.0.0.1 after it, to any query, so a fetch whose lookups use up the first answer sees the
+    // private one.
     const rebinding: Outcome[] = [];
     for (let n = 0; n < 12; n++) {
-      rebinding.push(await record(`${crypto.randomUUID().slice(0, 8)}-make-142.251.156.119-rebindfor60safter1times-10.0.0.1-rr.1u.ms`));
+      rebinding.push(await outcome(`${crypto.randomUUID().slice(0, 8)}-make-142.251.156.119-rebindfor60safter1times-10.0.0.1-rr.1u.ms`));
     }
+    // Saved before any assertion, so a failing run leaves its record too.
     mkdirSync('results', { recursive: true });
-    writeFileSync('results/ssrf-outcomes.json', JSON.stringify(outcomes, null, 1));
-    const kinds = rebinding.map(({ status, refusal }) => (status === 526 ? 'reached Google' : refusal ? `refused ${refusal}` : `other ${status}`));
-    expect(kinds.every((kind) => kind === 'reached Google' || kind.startsWith('refused'))).toBe(true);
-    // Without one refusal, no fetch saw the private answer, and the probe showed nothing.
-    expect(kinds.some((kind) => kind.startsWith('refused'))).toBe(true);
+    writeFileSync('results/ssrf-outcomes.json', JSON.stringify([...refused, ...reached, ...timedOut, ...rebinding], null, 1));
+
+    for (const [index, [name, code]] of REFUSED.entries()) {
+      expect({ name, ...refused[index] }).toMatchObject({ name, reason: 'challenge_failed', errorCode: code });
+    }
+    for (const [index, name] of REACHED.entries()) expect({ name, ...reached[index] }).toMatchObject({ name, reason: 'challenge_failed', errorCode: 526 });
+    for (const [index, name] of TIMED_OUT.entries()) expect({ name, ...timedOut[index] }).toMatchObject({ name, reason: 'timeout', failure: 'timeout' });
+    // Every fetch reaches Google or is refused for the private answer, and each happens at least
+    // once, so a 1u.ms that answered nothing, which reads as 1016, fails the test.
+    const codes = rebinding.map(({ errorCode }) => errorCode);
+    expect(codes.every((code) => code === 526 || code === 1002)).toBe(true);
+    expect(codes).toContain(526);
+    expect(codes).toContain(1002);
   });
 });

@@ -85,7 +85,7 @@ export function newLane(): Lane {
       if (response.status !== 101) throw new Error(`The upgrade to ${url} answered ${response.status}`);
       const socket = response.webSocket!;
       socket.accept();
-      return socketOf(socket, response.headers.get('Sec-WebSocket-Protocol') ?? '');
+      return socketOf(socket, () => response.headers.get('Sec-WebSocket-Protocol') ?? '');
     },
     env: laneEnv,
     stub: env.SERVER.getByName(name),

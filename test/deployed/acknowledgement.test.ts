@@ -28,6 +28,9 @@ describe("b's acknowledgement on the deployed Worker", () => {
     }
     mkdirSync('results', { recursive: true });
     writeFileSync('results/acknowledgement.json', JSON.stringify(outcomes, null, 1));
-    expect(outcomes).toHaveLength(8);
+    // What eight runs on 2026-10-25 measured. The race shows as `refused challenge_failed`, B having
+    // answered A's challenge before it held the secret, and then sep-notes.md's finding changes.
+    // `refused -32025` means B's host ran out of verifications: rerun a minute later.
+    expect(outcomes).toEqual(Array.from({ length: 8 }, () => 'subscribed'));
   });
 });

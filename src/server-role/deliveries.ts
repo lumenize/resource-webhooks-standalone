@@ -18,8 +18,8 @@ export type SendResult =
   | {
       status: number;
       body?: string;
-      /** The code of a refusal by the host's own network before the request left it, as Cloudflare's 1016. */
-      refusal?: number;
+      /** The error code the answer's body names, as Cloudflare's own pages do: 1016, 526. */
+      errorCode?: number;
     }
   | { failure: 'timeout' | 'connection_refused' };
 
@@ -32,9 +32,12 @@ export type DeliveryReport =
       kind: 'verification';
       url: string;
       outcome: 'verified' | 'failed' | 'cached';
-      /** How the challenge was answered, or why it was not, so the page can show why it failed. */
-      status?: number;
-      refusal?: number;
+      /**
+       * Why a challenge failed, for the page: the error code of a page the host's network answered
+       * with, or the failure. Never the endpoint's own status, since the page is open, and an
+       * origin that admits only the host's network answers A and not whoever watches the page.
+       */
+      errorCode?: number;
       failure?: string;
     }
   | { kind: 'attempt'; url: string; webhookId: string; attempt: number; outcome: string };
@@ -134,7 +137,7 @@ export class Deliveries {
       echoed = undefined;
     }
     const ok = result.status >= 200 && result.status < 300 && typeof echoed === 'string' && constantTimeEqual(echoed, challenge);
-    this.#options.report?.({ kind: 'verification', url, outcome: ok ? 'verified' : 'failed', status: result.status, refusal: result.refusal });
+    this.#options.report?.({ kind: 'verification', url, outcome: ok ? 'verified' : 'failed', errorCode: result.errorCode });
     if (!ok) throw new JsonRpcError(CALLBACK_ENDPOINT_ERROR, 'The callback endpoint did not echo the challenge', { reason: 'challenge_failed' });
     // A Wipe while the challenge was out forgets everything, this handshake included.
     if (generation === this.#generation) this.#verified.set(key, Date.now() + this.#options.verificationTtlMs);

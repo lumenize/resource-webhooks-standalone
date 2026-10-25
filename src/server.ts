@@ -41,9 +41,11 @@ export class Server extends DurableObject<Env> {
         }
         const answer = await readCapped(response.body, MAX_ANSWER_BYTES);
         const text = answer ? new TextDecoder().decode(answer) : '';
-        // Cloudflare answers a fetch it will not make, to a private address say, with its own page.
-        const refusal = response.headers.get('server') === 'cloudflare' ? /^error code: (\d+)/.exec(text)?.[1] : undefined;
-        return { status: response.status, body: text, ...(refusal ? { refusal: Number(refusal) } : {}) };
+        // Cloudflare answers some fetches with a page of its own naming an error code: 1016 when its
+        // resolver gives no address, 1002 for a prohibited one, 526 for a certificate that does not
+        // match the name. A receiver's body may name one too, which only misleads the page.
+        const errorCode = /^error code: (\d+)/.exec(text)?.[1];
+        return { status: response.status, body: text, ...(errorCode ? { errorCode: Number(errorCode) } : {}) };
       } catch (error) {
         return { failure: (error as Error).name === 'TimeoutError' ? 'timeout' : 'connection_refused' };
       }
@@ -111,6 +113,10 @@ export class Server extends DurableObject<Env> {
       this.#authorization.clear();
       const epoch = this.#role.wipe();
       socket.send(JSON.stringify({ type: 'done', action: 'wipe', epoch }));
+    } else if (control.action === 'schedule' && control.delaysMs === null) {
+      // Back to RETRY_SCHEDULE_MS, the schedule A runs until the page sets one.
+      this.ctx.storage.kv.delete('retrySchedule');
+      socket.send(JSON.stringify({ type: 'done', action: 'schedule' }));
     } else if (control.action === 'schedule' && Array.isArray(control.delaysMs) && control.delaysMs.every((delay) => typeof delay === 'number')) {
       this.ctx.storage.kv.put('retrySchedule', control.delaysMs);
       socket.send(JSON.stringify({ type: 'done', action: 'schedule' }));

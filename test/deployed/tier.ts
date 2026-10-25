@@ -12,17 +12,18 @@ export function deployedTier(): Tier {
   const origin = required('DEPLOYED_ORIGIN');
   return {
     origin,
-    // The instance names in wrangler.jsonc's vars, which a deploy keeps.
-    name: 'A',
-    gateway: 'B',
-    root: `${origin}/server/A`,
-    heartbeatMs: 30_000,
+    name: required('DEPLOYED_SERVER_INSTANCE'),
+    gateway: required('DEPLOYED_GATEWAY_INSTANCE'),
+    root: `${origin}/server/${required('DEPLOYED_SERVER_INSTANCE')}`,
+    heartbeatMs: Number(required('DEPLOYED_HEARTBEAT_MS')),
     operatorToken: required('DEPLOYED_OPERATOR_TOKEN'),
-    send: (request) => fetch(request),
+    // Whatever the request asked, a redirect comes back to the caller, as the lane's does.
+    send: (request) => fetch(new Request(request, { redirect: 'manual' })),
     connect: (url, protocols) =>
       new Promise((resolve, reject) => {
         const socket = new WebSocket(url.replace(/^http/, 'ws'), protocols);
-        socket.addEventListener('open', () => resolve(socketOf(socket, socket.protocol ?? '')));
+        const wrapped = socketOf(socket, () => socket.protocol ?? '');
+        socket.addEventListener('open', () => resolve(wrapped));
         socket.addEventListener('error', () => reject(new Error(`The upgrade to ${url} failed`)));
       }),
   };

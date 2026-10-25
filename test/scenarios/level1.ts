@@ -2,15 +2,18 @@
 // client, as phase 5 asks. It speaks only HTTP and WebSocket, through the parties' module.
 import { expect, vi } from 'vitest';
 import { SERVER_INFO } from '../../src/server-role/server-role';
-import { listen, signedIn, subscribe, watch, write, type Tier } from '../client/parties';
+import { listen, NETWORK_WAIT, signedIn, subscribe, watch, write, type Tier } from '../client/parties';
 
 /**
  * Scenario 2: A lists `mcp.resource.updated`, `b` subscribes after SEP-3415's handshake with B, a
- * write by `a` reaches `b` as an occurrence, and the back channel reports it all redacted.
+ * write by `a` reaches `b` as an occurrence, and the back channel reports it all redacted. It
+ * starts with the page's Wipe, as the demo does, so a deployed A carries nothing between runs.
  */
 export async function scenario2(tier: Tier): Promise<void> {
   const pageA = await watch(tier, 'A');
   const pageB = await watch(tier, 'B');
+  expect(await pageA.control('wipe')).toMatchObject({ type: 'done', action: 'wipe' });
+  expect(await pageB.control('wipe')).toEqual({ type: 'done', action: 'wipe' });
   const a = await signedIn(tier, 'a');
   const b = await signedIn(tier, 'b');
   // A note of this run's own, since a deployed A keeps every run's notes.
@@ -42,7 +45,7 @@ export async function scenario2(tier: Tier): Promise<void> {
   });
 
   const version = await write(a, uri);
-  await vi.waitFor(() => expect(listener.deliveries()).toHaveLength(1));
+  await vi.waitFor(() => expect(listener.deliveries()).toHaveLength(1), NETWORK_WAIT);
   const [delivery] = listener.deliveries();
   expect(delivery.subscriptionId).toBe(subscribed.id);
   expect(delivery.webhookId).toMatch(/^msg_[A-Za-z0-9]{24}$/);
@@ -63,12 +66,15 @@ export async function scenario2(tier: Tier): Promise<void> {
   const read = await b.client.request<{ resultType: string; contents: { uri: string; text: string }[] }>('resources/read', { uri });
   expect(read.contents).toEqual([{ uri, mimeType: 'application/json', text: '{"title":"Buy milk","done":false}' }]);
 
-  // A control passes over the same channel, and nothing secret comes back on either.
-  expect(await pageA.control('schedule', { delaysMs: [2000, 4000, 8000] })).toEqual({ type: 'done', action: 'schedule' });
+  // The Wipes passed over the same channels, and nothing secret came back on either. Each check
+  // reports a boolean, so a failure prints no secret it found.
   const everything = [...pageA.raw, ...pageB.raw].join('\n');
   expect(everything).toContain('whsec_…(32 bytes)');
-  expect(everything).not.toMatch(/whsec_[A-Za-z0-9+/]/);
-  expect(everything).not.toMatch(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\./);
-  expect(everything).not.toContain(tier.operatorToken);
-  expect(everything).not.toContain('"control"');
+  expect(/whsec_[A-Za-z0-9+/]/.test(everything)).toBe(false);
+  expect(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\./.test(everything)).toBe(false);
+  expect(everything.includes(tier.operatorToken!)).toBe(false);
+  expect(everything.includes('"control"')).toBe(false);
+  listener.close();
+  pageA.close();
+  pageB.close();
 }

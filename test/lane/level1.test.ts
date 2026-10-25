@@ -297,6 +297,23 @@ describe("A's handshake", () => {
     expect([altered, oversized].map((each) => each.deliveries().length)).toEqual([0, 0]);
   });
 
+  it("reports why a challenge failed by the code a host's page names, or the failure, and never the endpoint's own status", async () => {
+    const lane = newLane();
+    const page = await watch(lane, 'A');
+    const b = await signedIn(lane, 'b');
+    const uri = `${lane.root}/notes/inbox/note-42`;
+    const refusedByHost = receiver({ deliveries: () => new Response(null, { status: 200 }), challenges: () => new Response('error code: 1016', { status: 530 }) });
+    const notFound = receiver({ deliveries: () => new Response(null, { status: 200 }), challenges: () => new Response('<html>Not Found</html>', { status: 404 }) });
+    const hanging = receiver({ deliveries: () => new Response(null, { status: 200 }), challenges: () => new Promise<Response>(() => {}) });
+    for (const endpoint of [refusedByHost, notFound, hanging]) await refusal(subscribe(b, uri, endpoint.url(), newSecret()));
+    const verifications = page.reports().filter((report) => report.kind === 'verification');
+    expect(verifications).toEqual([
+      { party: 'A', kind: 'verification', url: refusedByHost.url(), outcome: 'failed', errorCode: 1016 },
+      { party: 'A', kind: 'verification', url: notFound.url(), outcome: 'failed' },
+      { party: 'A', kind: 'verification', url: hanging.url(), outcome: 'failed', failure: 'timeout' },
+    ]);
+  });
+
   it('writes the subscription only once its handshake succeeds, so a write during the handshake is not delivered', async () => {
     const lane = newLane();
     const a = await signedIn(lane, 'a');
@@ -637,6 +654,23 @@ describe("The page's controls", () => {
       expect(await page.control('wipe', {}, null)).toEqual({ type: 'refused', action: 'wipe' });
       expect(await page.control('nonsense')).toEqual({ type: 'unknown', action: 'nonsense' });
     }
+  });
+
+  it("sets A's retry schedule, and puts back the configured one when the page sends none", async () => {
+    const lane = newLane();
+    const page = await watch(lane, 'A');
+    const a = await signedIn(lane, 'a');
+    const b = await signedIn(lane, 'b');
+    const uri = `${lane.root}/notes/inbox/note-42`;
+    const endpoint = receiver({ deliveries: () => new Response(null, { status: 500 }) });
+    await subscribe(b, uri, endpoint.url(), newSecret());
+    const delays = env.RETRY_SCHEDULE_MS.split(',').map(Number);
+    expect(await page.control('schedule', { delaysMs: [60_000, 60_000] })).toEqual({ type: 'done', action: 'schedule' });
+    expect(await page.control('schedule', { delaysMs: null })).toEqual({ type: 'done', action: 'schedule' });
+    await write(a, uri);
+    // The configured schedule makes every attempt within a second, where the one set above would
+    // make only the first.
+    await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(delays.length + 1), { timeout: 3000 });
   });
 
   it("closes every client's socket on B's Wipe", async () => {

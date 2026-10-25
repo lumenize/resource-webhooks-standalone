@@ -35,7 +35,12 @@ export default defineConfig({
       lane('lane-closed', ['test/lane-closed/**/*.test.ts'], BINDINGS),
       // The deployed tier, over the network, only when scripts/deployed.mjs has deployed one.
       ...(process.env.DEPLOYED_ORIGIN
-        ? [{ test: { name: 'deployed', environment: 'node', include: ['test/deployed/**/*.test.ts'], testTimeout: 120_000, hookTimeout: 120_000 } }]
+        ? [
+            {
+              // One file at a time, since Scenario 2's Wipe would end another file's sign-ins mid-run.
+              test: { name: 'deployed', environment: 'node', include: ['test/deployed/**/*.test.ts'], fileParallelism: false, testTimeout: 120_000, hookTimeout: 120_000 },
+            },
+          ]
         : []),
       // Node tests: the Worker under wrangler's test harness, with its static assets, and the
       // repo's own scripts.
