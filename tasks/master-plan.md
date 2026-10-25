@@ -1,6 +1,6 @@
 # Resource webhooks, standalone
 
-**Status:** Pass 1 draft, revised 2026-10-25. Stage 1 ran twice, on 2026-10-23 and 2026-10-25, and Larry settled the decisions both raised. The mining pass over the predecessor comes next, then Pass 2's phases, then Stage 2. The requirements level 2 implies are numbered in [sep-notes.md](../sep-notes.md).
+**Status:** Pass 1 and Pass 2 drafted, 2026-10-25. Stage 1 ran twice and Larry settled what it raised; the mining pass ran; Pass 2's phases were written while Larry was away, with the calls that needed him marked as Claude's. Stage 2 comes next, then `/build-task`. The requirements level 2 implies are numbered in [sep-notes.md](../sep-notes.md).
 
 ## Objective
 
@@ -56,17 +56,9 @@ The sections that follow say what makes this worth building, then show the first
 ## Relationships
 
 - **Gated by nothing outside this repo.** The prototype and its notes can proceed now.
-- **Before the PR, the prototype builds every phase, in this order:**
-  1. **Level 1,** with the page's back channel from A and B, so every later module reports through it and the tests watch through it.
-  2. **Level 2 for one `https` resource.**
-  3. **Collections.**
-  4. **The demo page,** served from the Worker's own origin, with `b` running in the browser, a control that puts `b` to sleep and wakes it, and the controls § *The cast* names. Beats 1 to 13 need only the three phases before it.
-  5. **The `patch` form.**
-  6. **Resources without an `https` URI.**
-  7. **The PR's proposals,** last: one for each flavor built, this one as `proposals/XXXX-resource-webhooks.md`, in the shape of Luca's draft. Each has its flavor's `sep-notes.md` requirements as its Specification, then what building taught us, then its ledger of departures and narrowings, here D1 and N1, N3, N4 and N6.
-
-  That keeps the Objective's promise to take on what an implementation teaches rather than defer it.
+- **Before the PR, the prototype builds every phase in § *Phases*, in order:** level 1, then level 2 for one resource, collections, the demo page, the `patch` form and resources outside `https`, then the PR's proposals. That keeps the Objective's promise to take on what an implementation teaches rather than defer it.
 - **The mining pass over the predecessor ran on 2026-10-25,** and gave each piece of its task files a fate. § *Phases* carries what it settled: the test oracle, the validator, the JSON-RPC core, the transport's details and the `patch` rules. The Lumenize port's notes now live in [lumenize-port.md](lumenize-port.md).
+- **Mines and supersedes the predecessor's task files** at 79a927d, which stay untouched in `../mcp-events-prototype`. Nothing elsewhere waits on a test this repo un-skips.
 - **Gates the PR** to `modelcontextprotocol/experimental-ext-triggers-events`, from the fork in `../experimental-ext-triggers-events` on its `resource-webhooks` branch.
 - **Gates the official-SDK reference implementation,** in `../mcp-typescript-sdk`.
 - **Gates the comparison** with the flavors that extend or amend Events.
@@ -763,3 +755,149 @@ None.
 | `form` is optional, and a subscription without one gets `notify` (Larry, 2026-10-21) | A required `form`: one more field for every subscriber to get right. A `full` default: it would put contents in every delivery by default, against SEP-3415's § *Payload minimality*, though Larry first proposed on SEP-3415's thread, on 2026-10-16, to make the value the payload. |
 | A repo of its own, Apache-2.0 throughout (Larry, 2026-10-20) | A folder in `mcp-events-prototype`: the name says events, and a new repo keeps the predecessor's files untouched until mining. |
 | The SEP starts as numbered MUST, SHOULD and MAY notes beside the prototype (Larry, 2026-10-20) | Drafting the SEP first: the prototype's design leads, and the notes become the SEP's Specification and its conformance traceability. |
+| `write_note` takes an optional `version` precondition and returns the new version (Claude, 2026-10-25, while Larry was away) | A version the writer mints, as the predecessor's `newETag` was: A mints versions. |
+| A folder's `GET` returns its members' URIs, with no `ETag` (Claude, 2026-10-25, while Larry was away) | No `GET` for a folder: plain HTTP's blind spot would go unshown. A folder `ETag`: a collection has no version (R3). |
+| The phase on resources outside `https` adds the `_meta` version to every read A serves, `https` included (Claude, 2026-10-25, while Larry was away) | Only reads outside `https`: a `notify` subscriber that reads an `https` note through MCP could not tell which version it got. |
+| On a deployed Worker the page's controls need an operator token (Claude, 2026-10-25, while Larry was away) | Open controls: anyone could Wipe the deployed demo. |
+| A collection member whose catch-up patch starts from a version `b` lacks is read again (Claude, 2026-10-25, while Larry was away) | Catching up again: it would return the same patch. |
+| `Mcp-Name` carries the target's `uri` or `uriTemplate`, and nothing for `listed` (R40) (Claude, 2026-10-25, while Larry was away) | No `Mcp-Name`: the transport gives the header to gateways in front of servers, which route by it. |
+| The conformance framework, `npx @modelcontextprotocol/conformance@0.2.0-alpha.12`, still the newest alpha on 2026-10-25 and kept out of `package.json`, grades A's core methods with `--requirements 2026-07-28` on the `test-*` Worker, and level 2 gets tests of this repo's own (Claude, 2026-10-25, while Larry was away) | The suite in `package.json`: it brings zod, which CLAUDE.md keeps out. A conformance switch on the demo's Worker: test machinery would reach it. |
+| `b`'s OAuth flow runs the `auth/*` client scenarios it passes, and the baseline lists the rest as not implemented (Claude, 2026-10-25, while Larry was away) | Passing them all: refresh tokens, scopes and discovery beyond A's metadata are what the scaffolding leaves out on purpose. |
+| Sri's Events suites, `conformance` #521 and #541, still open, check level 1 as a check rather than a gate, pinned to a commit, with no test-only type or tool added to A (Claude, 2026-10-25, while Larry was away) | `clock.ticked` and control tools for them: test-only surface in A, where level 1 adds nothing to SEP-3415. Leaving them out: they are the nearest independent check of level 1. |
+| Each PR proposal ends with the objections we expect and our answers (Claude, 2026-10-25, while Larry was away) | No such section: the predecessor's list of objections showed that reviewers raise them anyway. |
+| The demo page is a phase that ends when beats 1 to 13 run, and what rehearsal brings goes into a child task file then (Claude, 2026-10-25, while Larry was away) | A child task file now: the rehearsal it waits on comes after the build. |
+
+## Phases
+
+Each phase ends with its criteria passing in the vitest-plugin lane against one local Worker, unless it says otherwise. A phase's tests drive the Worker through its real routes and assert each message value by value, as its scenarios show them, and every criterion names the one change that would make it fail. A test that drops below the public API says why in its comment, as `../lumenize/.claude/rules/testing.md` requires.
+
+1. **The Worker, its routing, and A's notes over plain HTTP.** This gives every later phase a running Worker, A's store of versions, and the plain-HTTP baseline of Scenario 1b.
+   - **Builds:**
+     - the project: `package.json`, `wrangler.jsonc` at compatibility date 2026-10-01 with `global_fetch_strictly_public`, the `Server` and `Gateway` classes and static assets, and a vitest-plugin lane. Its new dependencies, for Larry to approve before the build: `wrangler`, `@cloudflare/vitest-plugin`, `vitest`, `typescript`, `@cfworker/json-schema`, and `typescript-json-schema` as a development tool.
+     - the vendored `routeDORequest` in `src/vendor/lumenize-routing/`, with `bindings` and `cors`, the Worker's turning of a disallowed preflight's `204` into `403`, and the route table's rows for notes
+     - A's store of versions, as § *The cast* describes it: one counter across A, the epoch, deletion rows, and pruning as A writes
+     - JSON Schema generated from `Note` and `List` with the spec's own generator and flags, `typescript-json-schema --defaultNumberType integer --required`, committed, with a check that fails when it goes stale
+     - plain HTTP on notes and folders, by Scenario 1b and § The cast
+     - `ATTRIBUTIONS.md`, listing the copied `routeDORequest` and the spec's files
+   - **Success criteria:**
+     - Scenario 1b runs as a test, with every status and `ETag` it shows. Mutation: answer the conditional `GET` with `200`.
+     - A `PUT` under a stale `If-Match` answers `412`, and A's rows are unchanged after it. Mutation: skip the precondition.
+     - A `PUT` whose body has a `null` or unknown member answers `400`. Mutation: open the schema with `additionalProperties`.
+     - A request from another `Origin`, a preflight included, answers `403`, and no `Server` object exists after it. Mutation: drop the preflight's turn from `204` to `403`.
+     - A deletion adds a row marked deleted, and a later `GET` answers `404`. Mutation: delete the row.
+     - A folder's `GET` lists its members' URIs and carries no `ETag`. Mutation: add one.
+     - With the cut-off window set short, the next write removes rows older than it, except each live resource's newest. Mutation: prune the newest row too.
+     - The schema check fails when `Note` gains a member and the generated schema does not. Mutation: skip the comparison.
+2. **A's core MCP server, graded by the conformance suite.** This makes A an MCP server of 2026-07-28, which Scenario 1a and every later phase speak to.
+   - **Builds:**
+     - the JSON-RPC core, copied from Larry's `json-rpc-mixin`: its processing core, its error-to-status mapping, and its tests of the JSON-RPC spec's examples, without zod, `agents`, dispatch by reflection, batches or its WebSocket envelope. It is relicensed Apache-2.0 and listed in `ATTRIBUTIONS.md`.
+     - the transport of § *Constraints*, checking `Mcp-Method` and `Mcp-Name` against the body
+     - validation of every message against the spec's `schema.json` with `@cfworker/json-schema`, the file taken from upstream, since the `../modelcontextprotocol` fork has no `schema/2026-07-28/` yet
+     - A's core methods of § *The cast*, `write_note`'s precondition and result among them
+     - a `test-*` Worker, deployed or local, with the suite's fixtures behind the `CONFORMANCE` secret, which join `resources/list` only there
+   - **Success criteria:**
+     - Scenario 1a runs as a test. Mutation: name a version in the read's result.
+     - The spec's 129 example messages each pass validation, and one with a member removed fails it. Mutation: validate nothing.
+     - A request without the `_meta` envelope answers `400` with `-32602`, one whose `Mcp-Name` disagrees with its body answers `400`, an unknown method answers `404` with `-32601`, and a notification answers `202`. Mutation: drop each check in turn.
+     - `write_note` with a stale `version` answers `isError: true`, and A's rows are unchanged after it. Mutation: skip the precondition.
+     - The suite's server scenarios for `--requirements 2026-07-28` pass on the `test-*` Worker, except those its `conformance-baseline.yml` lists, each with its reason. Mutation: remove a core method.
+3. **The authorization server, and tokens at the edge.** This gives every client its own principal, so subscriptions are keyed by who asked.
+   - **Builds:**
+     - the authorization server module of § *Who may subscribe*: registration, an instant consent, PKCE, tokens signed with a Worker secret and naming their audience and epoch, and the metadata documents at the origin's root
+     - `onBeforeRequest` on A's routes, by the route table
+     - `mcp-client.ts`, the client module `a`, `b` and the tests share, using only `fetch` and Web Crypto
+     - **Exploratory, with both paths pinned:** the suite's server mode takes only a `--url`. The phase first reads how the 2026-07-28 requirement set's scenarios authenticate. If the suite gets a token from A's authorization server, it runs against the protected endpoint. If it cannot, the `CONFORMANCE` secret on the `test-*` Worker lets it through without a token, and the scenarios about protected resources run against the protected endpoint.
+   - **Success criteria:**
+     - A call to A's MCP endpoint without a token, or with one whose signature, expiry or audience is wrong, answers `401`, and no `Server` object exists after it. Mutation: let `onBeforeRequest` pass a bad audience.
+     - A token from before a Wipe passes the edge, and A refuses it by its epoch. Mutation: skip the epoch check.
+     - A `GET` of a note needs no token, and a `PUT` without one answers `401`. Mutation: open `PUT`.
+     - The suite still passes by one of the two pinned paths, and the baseline lists the `auth/*` client scenarios `b`'s flow does not pass, each with its reason. Mutation: break PKCE.
+4. **Level 1 end to end: A's webhook delivery, gateway B, and the Events server.** This builds the webhook code both levels share, and shows Scenario 2.
+   - **Builds:**
+     - A's webhook module: Standard Webhooks signing with the subscriber's `whsec_` secret, the verification handshake cached per `(principal, url)` in memory, the retry queue in memory with A's schedule as a setting, `redirect: "manual"` with any `3xx` a failure, and `410` and `413` as answers that stop retrying
+     - B's two routes: the webhook receiver, which verifies, passes a delivery down its client's socket, and answers `401` or `503` as § *The leg between the gateway and its client* says; and the socket, with `onBeforeConnect` and the secret's registration, from which B answers a handshake itself
+     - the Events types, written in the spec's style from SEP-3415 at b0efd11, which ships no TypeScript, with JSON Schema generated as in phase 1
+     - `events/list`, `events/subscribe` and `events/unsubscribe` for `mcp.resource.updated`, with `cursor: null`, lazy expiry, and `Unsupported` for `events/poll` and `events/stream`
+     - the back channel from A and B, which every later phase's tests watch through, and the operator token for the page's controls
+     - local delivery over `wrangler dev --local-protocol https`, with A posting to its own origin, a claim the phase checks first
+   - **Success criteria:**
+     - Scenario 2 runs as a test. Mutation: deliver an occurrence before the handshake.
+     - A delivery whose body was altered answers `401` at B, and A retries it on its schedule, under fake timers. Mutation: skip B's signature check.
+     - While `b`'s socket is closed, B answers `503`, and A's retry delivers the occurrence once `b` reconnects. Mutation: answer `200` with no socket.
+     - A challenge signed with a secret B never registered fails the subscribe with `CallbackEndpointError` and `challenge_failed`. Mutation: answer every challenge.
+     - A receiver answering `302` fails the attempt, and the `Location` is never fetched. Mutation: follow redirects.
+     - `410` stops the retries of that delivery. Mutation: retry on `410`.
+     - A refresh after an absence answers `cursor: null`, and nothing missed is replayed. Mutation: replay a missed occurrence.
+     - `events/poll` answers `Unsupported`. Mutation: answer `-32601`.
+     - A control sent without the operator token, under the deployed configuration, is refused. Mutation: skip the check.
+     - Sri's suites run against level 1 at a pinned commit, and `sep-notes.md` § *Findings* records which of their rows they could not grade, and why. Mutation: none; this records rather than gates.
+5. **A deployed tier.** This grounds the claims that hold only on Cloudflare, as `.claude/rules/testing.md` asks.
+   - **Builds:** a deploy of the `test-*` Worker, and a script that runs the level 1 tests against it. Each later phase adds its scenarios to that run.
+   - **Success criteria:**
+     - Level 1's tests pass against the deployed Worker. Mutation: deploy with `global_fetch_strictly_public` removed, which must fail A's POST to B with error 1042, recorded in `sep-notes.md` § *Findings*.
+     - A rerun of the measurement in `sep-notes.md`'s SSRF note, as a test, finds every range it names still refused. Mutation: none in code; the test guards the platform.
+6. **Level 2 for one resource.** This builds this extension's own methods, and shows Scenarios 3 to 8.
+   - **Builds:**
+     - the capability, `forms: ["notify", "full"]`, in `server/discover`
+     - `resources/webhooks/subscribe` and `resources/webhooks/unsubscribe` by R5 to R8, R16, R22, R25 and R40
+     - deliveries of a `ResourceChange` by R10 to R14 and R26 to R28, on phase 4's webhook module with the coalescing queue of N1
+     - `catchUp` in `notify` and `full`, the base version of R37, and a subscription whose grant lapsed subscribing again
+   - **Success criteria:**
+     - Scenarios 3 to 8 run as tests. Mutation: drop the contents from a `full` result.
+     - With B answering `503`, an edit to `v3` and then `v4` delivers only `v4`, and never `v3` after it. Mutation: queue `v4` behind `v3`.
+     - `webhook-id` is the same on each retry of one version and new for the version that replaces it. Mutation: mint one per attempt.
+     - A receiver's `410` stops that version only, and the next version is delivered. Mutation: end the subscription on `410`.
+     - A change whose `full` body passes 256 KiB is delivered as `notify`. Mutation: send it `full`.
+     - A refresh with `catchUp: "notify"` carries no contents, though the subscription's form is `full`. Mutation: follow the subscription's form.
+     - A subscription to a URI nobody wrote answers its base version with `deleted: true`, and the first write is delivered as `v1`. Mutation: refuse the subscribe.
+     - Another principal's unsubscribe with the same target and URL answers `NotFound`, and the subscription still delivers. Mutation: leave the principal out of the key.
+     - The `id` differs from an unkeyed hash of the key. Mutation: drop the key.
+     - Past `refreshBefore`, under fake time, deliveries stop, and a new subscribe naming the version it holds answers the current one. Mutation: never expire.
+7. **Collections.** This covers folders, templates and `listed` targets, and shows Scenarios 9, 10 and 10b.
+   - **Builds:** the two templates and the `resources/list` of § *The cast*, folder reads, and R18 to R20 and R32 to R38, with A's page size as a setting
+   - **Success criteria:**
+     - Scenarios 9, 10 and 10b run as tests. Mutation: deliver note-43's `v2`.
+     - An empty folder answers `changes: []` and a cursor, not a version. Mutation: answer a version.
+     - No delivery carries a cursor. Mutation: add one.
+     - With the page size set to one, a catch-up of two changes comes in two results, the first with `hasMore: true`. Mutation: ignore the page size.
+     - `.../server/A/{type}/archive` covers both types' archives, `{+path}` matches any depth, and a template with another expression is refused with `Unsupported`. Mutation: let `{type}` span segments.
+     - A `listed` target covers the lists as well as the inbox. Mutation: list the inbox only.
+     - R39 goes unexercised, since everyone may read A's notes, and the phase says so rather than building a revocation to trigger it.
+8. **The demo page's mechanics.** **Mechanics pinned, staging exploratory:** the details beyond the rehearsed beats wait for Larry's rehearsal after the build.
+   - **Builds:** the page, served from the Worker's static assets; the four boxes, fed by the back channel; `a` and `b` running in the browser on `mcp-client.ts`, with `b`'s OAuth and PKCE; the Wipe, the retry schedule and the control that puts `b` to sleep and wakes it
+   - **Success criteria:**
+     - A real-browser test, with the page where production serves it, drives beats 1 to 13 and checks each box after each beat. Mutation: drop a back-channel report.
+     - After a Wipe, a token `b` held before it is refused by A, and `b` registers again. Mutation: keep the epoch.
+9. **The `patch` form.** This adds the third form, by § *The `patch` form*.
+   - **Builds:** `"patch"` in the capability's `forms`; the `mergePatch` variant of `ResourceChange` and of a result; patches on delivery and on catch-up; the copied `applyMergePatch` and `setOwn`, listed in `ATTRIBUTIONS.md`, and a plain-JSON `diff`; the patch rules as R-numbers in `sep-notes.md`; and in § *Findings*, the bytes on the wire for each form, for a note and a list of 100 items
+   - **Success criteria:**
+     - When `v4` replaces a pending `v3` that was to patch from `v2`, the delivered patch starts from `v2`. Mutation: start it from `v3`.
+     - With the retry queue's entry dropped, the patch starts from `v3`, and `b` catches up. Mutation: none; the test guards the fallback.
+     - A catch-up with `catchUp: "patch"` patches from the version it names, and from one A has pruned it carries the full contents. Mutation: patch from the newest kept version.
+     - A created resource, or one whose contents are not a single JSON text entry, goes `full`. Mutation: patch from nothing.
+     - A patch that sets `__proto__` changes only that member's data. Mutation: assign members plainly.
+     - `diff` and then `applyMergePatch` give back the new value on RFC 7396's Appendix A vectors and the predecessor's extra ones. Mutation: drop `null` handling.
+10. **Resources without an `https` URI.** This covers the resources most MCP servers have, by § *Resources without an `https` URI*.
+    - **Builds:** A's lists served again under a scheme of A's own, as `lists:///inbox/groceries`, readable only through `resources/read`; the `_meta` version, under a provisional key in the extension's own namespace until one is agreed, on every read A serves
+    - **Success criteria:**
+      - After a `notify` delivery of a list, a `resources/read` of it returns the delivered version or a later one in `_meta`. Mutation: omit the key.
+      - A `GET` of a `lists:///` resource has no route, and the resource has no `ETag`. Mutation: none; the test guards the scheme.
+      - Every read A serves carries the `_meta` version, `https` included. Mutation: add it only outside `https`.
+11. **The PR's proposal.** This turns the prototype's notes into what the working group reads.
+    - **Builds:** `proposals/XXXX-resource-webhooks.md` on the `resource-webhooks` branch of `../experimental-ext-triggers-events`, synced with `upstream` first, in the shape § *Relationships* gives; `sep-notes.md` § *Findings* filled for every item of § *What building it should teach us*
+    - **Success criteria:**
+      - Every R-, N- and D-number the proposal cites exists in `sep-notes.md`, and every link resolves. Mutation: cite a withdrawn rule.
+      - Every item of § *What building it should teach us* has a Findings entry. Mutation: leave one out.
+      - The PR opens only on Larry's word, since pushing publishes.
+
+## Non-goals
+
+- **Polling,** and **a mirror,** as `sep-notes.md` § *Out of scope* lists them.
+- **The other two flavors,** each in a repo of its own after this one.
+- **The official-SDK reference implementation,** a later milestone in `../mcp-typescript-sdk`.
+- **Suspension, dual-signing during rotation, `deliveryStatus`,** and the three ways to verify an endpoint besides the handshake, until something needs them.
+- **Refresh tokens, revocation, scopes and real identity** in the authorization server, which is scaffolding.
+- **Delivery over an open stream,** until `subscriptions/listen` opens its filter to extensions.
+- **Demo staging beyond the rehearsed beats,** which waits for rehearsal.
+- **The Lumenize port,** whose notes are in [lumenize-port.md](lumenize-port.md).
+- **Sri's suites as a gate,** since they check level 1 rather than grade it.
