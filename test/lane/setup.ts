@@ -3,7 +3,7 @@
 // reaches the network.
 import { env } from 'cloudflare:workers';
 import { vi } from 'vitest';
-import { callWorker, currentEnv } from './lane';
+import { callWorker, laneEnvFor } from './lane';
 
 export const fetchSpy = vi
   .spyOn(globalThis, 'fetch')
@@ -12,5 +12,5 @@ export const fetchSpy = vi
     if (new URL(request.url).origin !== env.ORIGIN) {
       throw new Error(`A fetch tried to leave the lane: ${request.method} ${request.url}`);
     }
-    return callWorker(request, currentEnv());
+    return callWorker(request, laneEnvFor(request));
   });

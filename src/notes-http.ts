@@ -1,9 +1,9 @@
-// Plain HTTP on A's notes and lists, as RFC 9110 defines it: a GET carries the version as a
-// strong ETag and answers a matching If-None-Match with 304, and a PUT or DELETE honours
+// Plain HTTP on A's notes and lists, as RFC 9110 defines it: a GET or HEAD carries the version
+// as a strong ETag and answers a matching If-None-Match with 304, and every method honours
 // If-Match and If-None-Match. A folder's GET lists its members' URIs and has no ETag.
 import { Validator } from '@cfworker/json-schema';
 import schema from './resource-types.schema.json';
-import type { Preconditions, VersionCondition, VersionStore } from './version-store';
+import { passes, type Preconditions, type VersionCondition, type VersionStore } from './version-store';
 
 /** A write's body cap, well under SQLite's 2 MB row limit. */
 export const MAX_BODY_BYTES = 1024 * 1024;
@@ -38,19 +38,20 @@ export async function serveNotes(
   const target = parseTarget(path);
   if (!target) return text(404, 'Not Found');
   if (!target.resource) {
-    if (request.method !== 'GET') return text(405, 'Method Not Allowed', { Allow: 'GET' });
+    if (request.method !== 'GET' && request.method !== 'HEAD') return text(405, 'Method Not Allowed', { Allow: 'GET, HEAD' });
     const members = store.members(target.path).map((member) => `${root}${member}`);
     return Response.json({ members });
   }
   switch (request.method) {
     case 'GET':
+    case 'HEAD':
       return get(request, target, store);
     case 'PUT':
       return put(request, target, store);
     case 'DELETE':
       return remove(request, target, store);
     default:
-      return text(405, 'Method Not Allowed', { Allow: 'GET, PUT, DELETE' });
+      return text(405, 'Method Not Allowed', { Allow: 'GET, HEAD, PUT, DELETE' });
   }
 }
 
@@ -58,10 +59,12 @@ function get(request: Request, target: Target, store: VersionStore): Response {
   const current = store.current(target.path);
   if (!current || current.deleted) return text(404, 'Not Found');
   const etag = quote(current.version);
-  const ifNoneMatch = entityTags(request.headers.get('If-None-Match'), 'weak');
-  if (ifNoneMatch && (ifNoneMatch === '*' || ifNoneMatch.includes(current.version))) {
+  const { ifMatch, ifNoneMatch } = preconditions(request);
+  if (!passes(current.version, { ifMatch })) return text(412, 'Precondition Failed');
+  if (!passes(current.version, { ifNoneMatch })) {
     return new Response(null, { status: 304, headers: { ETag: etag } });
   }
+  // A HEAD's body is dropped by the runtime, as HTTP requires, so HEAD shares GET's answer.
   return new Response(current.contents, {
     headers: { 'Content-Type': 'application/json', ETag: etag },
   });
@@ -72,13 +75,15 @@ async function put(request: Request, target: Target, store: VersionStore): Promi
   if (!bytes) return text(413, 'Content Too Large');
 
   // A's contents are the bytes as sent, so the ETag a PUT answers names exactly what a GET
-  // returns, as RFC 9110 requires of a validator in a PUT's response.
-  const body = new TextDecoder().decode(bytes);
+  // returns, as RFC 9110 requires of a validator in a PUT's response. So the decoder refuses
+  // bytes that are not UTF-8 rather than replace them, and keeps a byte-order mark.
+  let body: string;
   let value: unknown;
   try {
+    body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
     value = JSON.parse(body);
   } catch {
-    return Response.json({ error: 'The body is not JSON' }, { status: 400 });
+    return Response.json({ error: 'The body is not JSON in UTF-8' }, { status: 400 });
   }
   const { valid, errors } = TYPES[target.type].validator.validate(value);
   if (!valid) return Response.json({ error: 'The body does not match its type', errors }, { status: 400 });

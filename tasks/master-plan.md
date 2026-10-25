@@ -782,7 +782,7 @@ None.
 Each phase ends with its criteria passing in the vitest-plugin lane against one local Worker, unless it says otherwise. A phase's tests drive the Worker through its real routes and assert each message value by value, as its scenarios show them, and every criterion names the one change that would make it fail. A test that drops below the public API says why in its comment, as `../lumenize/.claude/rules/testing.md` requires.
 
 **How the tests reach things the lane cannot.** These are pinned in phase 1 and used by every phase after it:
-- **A's POST to B stays inside the lane.** A test-setup spy on `globalThis.fetch` sends a request for the Worker's own origin to the Worker's default handler, called with the running test's env, and lets nothing else out, so B's real route, signature check and socket run end to end. Phase 1's first test is a probe that should fail, showing the spy sees a fetch made inside A. If it does not, the fallback is miniflare's `outboundService`. The same handlers serve as the fault receivers, answering `302`, `410`, `413` or `401`, hanging, or holding an answer until the test releases it.
+- **A's POST to B stays inside the lane.** A test-setup spy on `globalThis.fetch` sends a request for the Worker's own origin to the Worker's default handler, called with the env of the test whose instance the request names, and lets nothing else out, so B's real route, signature check and socket run end to end. Phase 1's first test is a probe that should fail, showing the spy sees a fetch made inside A. If it does not, the fallback is miniflare's `outboundService`. The same handlers serve as the fault receivers, answering `302`, `410`, `413` or `401`, hanging, or holding an answer until the test releases it.
 - **Time.** Comparisons with the clock (a grant's expiry, the cut-off window, `refreshBefore`) move it with `vi.setSystemTime`. Retries use a schedule set in milliseconds and real timers, waited on with `vi.waitFor`.
 - **Settings.** A test sets A's retry schedule, cut-off window, page size, attempt timeout and limits through miniflare `bindings`, never through the page's controls.
 - **Isolation.** Each test gets A and B of its own, under instance names from a binding: `SERVER_INSTANCE` names the one instance the edge routes, and each test calls the handler with an env naming its own, as `A-1f2e3d4c`. So rows, the counter, subscriptions and in-memory state never carry from one test to the next, though the plugin isolates storage only per file.
@@ -809,7 +809,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
      - `GET /server/X/notes/note-1` answers `404`, and `listDurableObjectIds(env.SERVER)` is unchanged. Mutation: route any instance name.
      - A navigation request for `/authorize` and for a note reaches the Worker, not the asset fallback, run under wrangler's `createTestHarness`, since the lane serves no assets. Mutation: configure the `single-page-application` fallback.
      - A deletion adds a row marked deleted, and a later `GET` answers `404`. Mutation: delete the row.
-     - A folder's `GET` lists its members' URIs and carries no `ETag`, and a write under `inbox2/` is not among `inbox/`'s members. Mutation: match the prefix without its trailing slash.
+     - A folder's `GET` lists its members' URIs and carries no `ETag`, and writes under `inbox-old/` and `inbox2/` are not among `inbox/`'s members, since `-` sorts below `/` and `2` above it. Mutation: match the prefix without its trailing slash.
      - With the cut-off window set short and a deletion older than it, the next write removes old rows, the deletion's among them, but keeps each live resource's newest. Mutation: keep deletion rows.
      - Delete a note, let the window pass, write it again: its new version differs from the deletion's. Mutation: prune before inserting.
      - The schema check fails when `Note` gains a member and the generated schema does not. Mutation: skip the comparison.
@@ -923,7 +923,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
      - Scenarios 9, 10 and 10b run as tests, 10b with one write outside the inbox after the time jump. Mutation: deliver note-43's `v2`.
      - An empty folder answers `changes: []` and a cursor, not a version, and subscribing to a type's root succeeds as a collection. Mutation: answer a version.
      - Each write to a member yields exactly one delivery, naming the member, and none for the folder. Mutation: deliver the folder too.
-     - A write under `inbox/sub/` is delivered on the inbox's subscription, and one under `inbox2/` is not. Mutation: match the prefix without its trailing slash.
+     - A write under `inbox/sub/` is delivered on the inbox's subscription, and ones under `inbox-old/` and `inbox2/` are not. Mutation: match the prefix without its trailing slash.
      - No delivery carries a cursor. Mutation: add one.
      - With the page size set to one, a catch-up of two changes comes in two results that list each member once, the second without `hasMore`. Mutation: return the newest stamp as the `hasMore` cursor.
      - A paged reset with page size one leaves `b` dropping nothing until its last page. Mutation: drop after each page.
@@ -977,11 +977,13 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 
 ### Phase 1
 
-**For Larry.** Nothing waits on you. Five things this phase changed that the plan had decided, all made the plan's text now:
+**For Larry.** One question, and five things this phase changed that the plan had decided, all made the plan's text now.
+
+- **May I add `@types/node` 24 as a development dependency?** It arrives today through `vitest` at 26.6.5, two majors past the Node 24 that `.nvmrc` names, and Lumenize's `packaging.md` says it must track the runtime major. Only the Node-side tests use it, for `node:http` and `node:fs`.
 
 - **`run_worker_first` is gone, and the Decisions table says why.** With no `not_found_handling`, a navigation that matches no asset already reaches the Worker, so the setting changed nothing and its mutation could not fail. The navigation test now fails when the `single-page-application` fallback is configured, which is the hazard Stage 2 named.
 - **`Gateway` is registered in phase 4, where B is built,** so phase 1 carries no empty class.
-- **The fetch spy calls the Worker's handler with the running test's env,** not `exports.default.fetch`, which takes no env, so each test's own instance name reaches the edge.
+- **The fetch spy calls the Worker's handler with an env of the test's own,** not `exports.default.fetch`, which takes no env, so each test's own instance name reaches the edge. It finds that env by the instance the request names, so a late retry reaches its own test's A.
 - **A folder's `GET` answers `{"members": [uri, …]}`,** an object rather than a bare array, so paging can join it later.
 - **The claims header is phase 3's.** Phase 1 verifies no token, so nothing strips or sets `x-rw-principal` yet, and `PUT` and `DELETE` need no token until phase 3's criterion closes them.
 
@@ -993,7 +995,10 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 - **Fake time reaches A.** `vi.setSystemTime` moved the clock A prunes by, and deleting either jump reds its test.
 - **Two mutations survived at first.** The `Content-Length` pre-check could not fail, because the streamed cap refuses the same bodies, so it was deleted rather than tested. The version-reuse test passed without its time jump, so it now also asserts the deletion's row was pruned.
 - **One workerd line, `read end of pipe was aborted`, prints when the 1 MiB tests run together, though none prints it alone.** It is no counted error, and it was not chased further.
-- **21 mutations, all caught against the final tree,** each naming the test that reds, from a table in the session's scratchpad.
+- **35 mutations, all caught against the final tree,** each naming the test that reds, from a table in the session's scratchpad.
+- **The verifier failed the first tree on one major issue and eight minor ones, all fixed.** The folder fixture could not catch its own mutation in its literal form, since `inbox2/` sorts above the range's upper bound, so `inbox-old/`, which sorts below `/`, joined it, in phase 7's criterion too. The fetch spy kept the last test's env, which a late retry would have used, so it now looks the env up by instance name. The decoder replaced bytes that were not UTF-8, so the stored contents were not the bytes sent, and could grow past SQLite's row limit. A missing note's `DELETE` under `If-Match` answered `412`, where RFC 9110 says `404`. A `GET` ignored `If-Match`, `HEAD` was refused at the edge, the index named one column and covered two, a bad cut-off setting failed only after a row was written, and `lists`, non-JSON bodies, folder writes and `If-Match: *` had no tests.
+- **A blanked `HEAD` body could not fail,** since the runtime drops it on the way out of A, so that line went too.
+- **Pruning reads every row on each write,** as its comment now says: an index on `writtenAt` would cost a write on every insert, and reads cost a thousandth as much.
 
 **Close-out.**
 

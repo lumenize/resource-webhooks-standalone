@@ -28,7 +28,7 @@ it("refuses another origin with 403 on every route, a preflight included, and wa
     expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
   }
   for (const url of ['/server', '/server/X/notes/note-1', '/authorize', '/nowhere']) {
-    const response = await callWorker(new Request(`${env.ORIGIN}${url}`, { method: 'OPTIONS', headers: { Origin: EVIL } }));
+    const response = await callWorker(new Request(`${env.ORIGIN}${url}`, { method: 'OPTIONS', headers: { Origin: EVIL } }), lane.env);
     expect({ url, status: response.status }).toEqual({ url, status: 403 });
   }
   expect(await serverIds()).toEqual(before);

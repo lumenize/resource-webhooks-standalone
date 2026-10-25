@@ -16,7 +16,7 @@ interface Route {
 
 /** Every route the edge lets reach A. */
 const SERVER_ROUTES: readonly Route[] = [
-  { path: /^\/(notes|lists)(\/.*)?$/, methods: ['GET', 'PUT', 'DELETE'] },
+  { path: /^\/(notes|lists)(\/.*)?$/, methods: ['GET', 'HEAD', 'PUT', 'DELETE'] },
 ];
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {

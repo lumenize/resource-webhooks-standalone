@@ -34,6 +34,7 @@ export class VersionStore {
 
   /** `cutoffWindowMs` is how long a superseded row or a deletion stays before a write prunes it. */
   constructor(sql: SqlStorage, options: { cutoffWindowMs: number }) {
+    if (!(options.cutoffWindowMs > 0)) throw new RangeError(`The cut-off window must be a positive number of ms, not ${options.cutoffWindowMs}`);
     this.#sql = sql;
     this.#cutoffWindowMs = options.cutoffWindowMs;
     sql.exec(`
@@ -44,7 +45,7 @@ export class VersionStore {
         deleted INTEGER NOT NULL CHECK (deleted IN (0, 1)),
         writtenAt TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_Versions_path ON Versions(path, stamp);
+      CREATE INDEX IF NOT EXISTS idx_Versions_path ON Versions(path);
       CREATE TABLE IF NOT EXISTS Epoch (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         value INTEGER NOT NULL
@@ -78,11 +79,15 @@ export class VersionStore {
     return { outcome: 'written', version: this.#add(path, contents), created: !live };
   }
 
-  /** Adds a deletion as the path's new version, if the resource exists and the preconditions pass. */
+  /**
+   * Adds a deletion as the path's new version, if the resource exists and the preconditions pass.
+   * A missing resource is `not-found` whatever the preconditions say, as RFC 9110 ignores them
+   * when the answer without them would be 404.
+   */
   delete(path: string, preconditions: Preconditions = {}): WriteOutcome {
     const live = this.#live(path);
-    if (!passes(live?.version, preconditions)) return { outcome: 'precondition-failed' };
     if (!live) return { outcome: 'not-found' };
+    if (!passes(live.version, preconditions)) return { outcome: 'precondition-failed' };
     return { outcome: 'written', version: this.#add(path, null), created: false };
   }
 
@@ -125,7 +130,9 @@ export class VersionStore {
     return this.#version(stamp);
   }
 
-  // Drops rows older than the cut-off window, but keeps each live resource's newest row.
+  // Drops rows older than the cut-off window, but keeps each live resource's newest row. It
+  // reads every row on each write, since an index on writtenAt would cost a write per insert
+  // and reads cost a thousandth as much.
   #prune(now: Date): void {
     const cutoff = new Date(now.getTime() - this.#cutoffWindowMs).toISOString();
     this.#sql.exec(
@@ -141,7 +148,8 @@ export class VersionStore {
   }
 }
 
-function passes(liveVersion: string | undefined, { ifMatch, ifNoneMatch }: Preconditions): boolean {
+/** Whether a resource at `liveVersion`, or missing when it is undefined, passes the preconditions. */
+export function passes(liveVersion: string | undefined, { ifMatch, ifNoneMatch }: Preconditions): boolean {
   if (ifMatch && !matches(liveVersion, ifMatch)) return false;
   if (ifNoneMatch && matches(liveVersion, ifNoneMatch)) return false;
   return true;

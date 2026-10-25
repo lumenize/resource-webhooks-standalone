@@ -24,3 +24,14 @@ it('sees a fetch made inside A, and sends it to the Worker', async () => {
 it('lets no fetch out to another origin', async () => {
   await expect(fetch('https://example.com/')).rejects.toThrow('A fetch tried to leave the lane');
 });
+
+it("routes a fetch to the A it names, and refuses one that names no lane's A", async () => {
+  const first = newLane();
+  await first.fetch('/notes/inbox/note-1', { method: 'PUT', body: '{"title":"First"}' });
+  newLane();
+
+  // The first lane's A is still reached after a second lane exists, as a late retry would be.
+  const late = await fetch(`${first.root}/notes/inbox/note-1`);
+  expect(await late.text()).toBe('{"title":"First"}');
+  await expect(fetch(`${first.root.replace(first.name, 'A-gone')}/notes/inbox/note-1`)).rejects.toThrow('No lane is listening');
+});

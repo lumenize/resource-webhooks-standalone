@@ -1,5 +1,6 @@
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { VersionStore } from '../../src/version-store';
 import { newLane, type Lane } from './lane';
 
 const BUY_MILK = '{"title":"Buy milk"}';
@@ -50,6 +51,49 @@ describe('Scenario 1b: polling with plain HTTP', () => {
   });
 });
 
+describe('conditional requests, as RFC 9110 orders them', () => {
+  it('answers If-None-Match: * and a weak tag on a GET with 304, and a HEAD with headers only', async () => {
+    const lane = newLane();
+    const v1 = (await put(lane, '/notes/inbox/note-42', BUY_MILK)).headers.get('ETag')!;
+    expect((await lane.fetch('/notes/inbox/note-42', { headers: { 'If-None-Match': '*' } })).status).toBe(304);
+    expect((await lane.fetch('/notes/inbox/note-42', { headers: { 'If-None-Match': `"e0.0", W/${v1}` } })).status).toBe(304);
+    expect((await lane.fetch('/notes/inbox/note-42', { headers: { 'If-None-Match': '"e0.0"' } })).status).toBe(200);
+
+    const head = await lane.fetch('/notes/inbox/note-42', { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect(head.headers.get('ETag')).toBe(v1);
+    expect(await head.text()).toBe('');
+  });
+
+  it('answers a GET under a stale If-Match with 412, and never lets a weak tag match it', async () => {
+    const lane = newLane();
+    const v1 = (await put(lane, '/notes/inbox/note-42', BUY_MILK)).headers.get('ETag')!;
+    expect((await lane.fetch('/notes/inbox/note-42', { headers: { 'If-Match': '"e0.0"' } })).status).toBe(412);
+    expect((await lane.fetch('/notes/inbox/note-42', { headers: { 'If-Match': `W/${v1}` } })).status).toBe(412);
+    expect((await lane.fetch('/notes/inbox/note-42', { headers: { 'If-Match': v1 } })).status).toBe(200);
+  });
+
+  it('refuses If-Match: * on a note that does not exist with 412', async () => {
+    const lane = newLane();
+    expect((await put(lane, '/notes/inbox/note-42', BUY_MILK, { 'If-Match': '*' })).status).toBe(412);
+    expect(await rows(lane)).toEqual([]);
+  });
+
+  it('answers a DELETE of a missing note with 404 whatever its If-Match says', async () => {
+    const lane = newLane();
+    expect((await lane.fetch('/notes/inbox/note-42', { method: 'DELETE', headers: { 'If-Match': '"e0.1"' } })).status).toBe(404);
+  });
+
+  it('refuses a DELETE under a stale If-Match with 412', async () => {
+    const lane = newLane();
+    const v1 = (await put(lane, '/notes/inbox/note-42', BUY_MILK)).headers.get('ETag')!;
+    await put(lane, '/notes/inbox/note-42', '{"title":"Buy oat milk"}', { 'If-Match': v1 });
+    const stale = await lane.fetch('/notes/inbox/note-42', { method: 'DELETE', headers: { 'If-Match': v1 } });
+    expect(stale.status).toBe(412);
+    expect((await lane.fetch('/notes/inbox/note-42')).status).toBe(200);
+  });
+});
+
 describe('writes', () => {
   it('refuses a PUT under a stale If-Match with 412, and leaves the rows as they were', async () => {
     const lane = newLane();
@@ -79,6 +123,42 @@ describe('writes', () => {
     const lane = newLane();
     const response = await put(lane, '/notes/inbox/note-42', '{"title":"Buy milk","colour":"blue"}');
     expect(response.status).toBe(400);
+    expect(await rows(lane)).toEqual([]);
+  });
+
+  it('refuses a body that is not JSON, or not UTF-8, with 400', async () => {
+    const lane = newLane();
+    expect((await put(lane, '/notes/inbox/note-42', '{"title":')).status).toBe(400);
+    // A JSON string holding bytes that are not UTF-8, which a lenient decoder would replace.
+    const bytes = new Uint8Array([...new TextEncoder().encode('{"title":"'), 0xff, 0xfe, ...new TextEncoder().encode('"}')]);
+    expect((await lane.fetch('/notes/inbox/note-42', { method: 'PUT', body: bytes })).status).toBe(400);
+    expect(await rows(lane)).toEqual([]);
+  });
+
+  it('keeps a list as sent, and refuses one whose items are not strings', async () => {
+    const lane = newLane();
+    const groceries = '{ "title": "Groceries", "items": ["oat milk"] }';
+    expect((await put(lane, '/lists/list-7', groceries)).status).toBe(201);
+    expect(await (await lane.fetch('/lists/list-7')).text()).toBe(groceries);
+    expect((await put(lane, '/lists/list-7', '{"title":"Groceries","items":[1]}')).status).toBe(400);
+    // A list's body is not a note, so the type comes from the path.
+    expect((await put(lane, '/lists/list-8', BUY_MILK)).status).toBe(400);
+  });
+
+  it('refuses a write to a folder with 405', async () => {
+    const lane = newLane();
+    for (const method of ['PUT', 'DELETE']) {
+      const response = await lane.fetch('/notes/inbox', { method, body: method === 'PUT' ? BUY_MILK : undefined });
+      expect({ method, status: response.status, allow: response.headers.get('Allow') }).toEqual({ method, status: 405, allow: 'GET, HEAD' });
+    }
+  });
+
+  it('refuses a method it does not take with 405, though the edge never sends one', async () => {
+    const lane = newLane();
+    // Below the public API: the edge answers 404 to a POST before A sees it, so only a
+    // request made straight to A's stub reaches A's own refusal.
+    const response = await lane.stub.fetch(new Request(`${lane.root}/notes/inbox/note-42`, { method: 'POST', body: BUY_MILK }));
+    expect(response.status).toBe(405);
     expect(await rows(lane)).toEqual([]);
   });
 
@@ -147,6 +227,7 @@ describe('folders', () => {
     await put(lane, '/notes/inbox/note-42', BUY_MILK);
     await put(lane, '/notes/inbox/errands/note-43', '{"title":"Post office"}');
     await put(lane, '/notes/inbox2/note-44', '{"title":"Not in the inbox"}');
+    await put(lane, '/notes/inbox-old/note-46', '{"title":"Nor this"}');
     await put(lane, '/notes/inbox/note-45', '{"title":"Gone"}');
     await lane.fetch('/notes/inbox/note-45', { method: 'DELETE' });
 
@@ -159,6 +240,7 @@ describe('folders', () => {
     });
     expect(await (await lane.fetch('/notes')).json()).toEqual({
       members: [
+        `${lane.root}/notes/inbox-old/note-46`,
         `${lane.root}/notes/inbox/errands/note-43`,
         `${lane.root}/notes/inbox/note-42`,
         `${lane.root}/notes/inbox2/note-44`,
@@ -170,6 +252,23 @@ describe('folders', () => {
 describe('pruning, with the cut-off window at one minute', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('refuses a cut-off window that is not a positive number before any write', async () => {
+    const lane = newLane();
+    // Below the public API: the window comes from a binding, so only a store built by hand
+    // can be given a bad one.
+    const thrown = await runInDurableObject(lane.stub, (_instance, state) =>
+      [NaN, 0, -1].map((cutoffWindowMs) => {
+        try {
+          new VersionStore(state.storage.sql, { cutoffWindowMs });
+          return 'accepted';
+        } catch (error) {
+          return (error as Error).name;
+        }
+      }),
+    );
+    expect(thrown).toEqual(['RangeError', 'RangeError', 'RangeError']);
   });
 
   it("drops rows older than the window, a deletion's among them, but keeps each live resource's newest", async () => {
