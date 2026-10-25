@@ -63,7 +63,7 @@ The sections that follow say what makes this worth building, then show the first
 The predecessor, `../mcp-events-prototype`, never got as far as code, only design, in a few files including a detailed Pass 1 task file. Once we are happy with this repo's design, a mining pass over the predecessor decides each piece's final fate, but this draft already carries a number of items from it:
 
 - the `Note` type, the tools `write_note` and `delete_note`, and the Worker's URL scheme
-- the Events server that level 1 needs: `events/list`, `events/subscribe` and webhook delivery as SEP-3415 defines them
+- the Events server that level 1 needs, cut to `events/list`, `events/subscribe`, `events/unsubscribe` and webhook delivery with its retries, as SEP-3415 defines them, with no replay
 - the predecessor's cast, given new roles. Its peer that held the notes is now the server A, and its writing browser page is now `a`. Its peer that watched and kept copies has no counterpart: B is a gateway, and the client `b` behind it keeps the copies.
 - the table of ways to reach a resource, and the plain-HTTP straw man with ETags as versions
 - the forms `notify`, `full` and `patch`, and a delivery that names its own form
@@ -142,7 +142,7 @@ Neither SEP-3415 nor this extension says how a gateway reaches its client. SEP-3
 |---|---|---|---|---|
 | **Write** | `tools/call` on a tool the server offers, such as `write_note` | `PUT` on the resource's URL, and `DELETE` | (none) | (none) |
 | **Read** | `resources/read` | `GET` on the resource's URL | (none) | (none: a client reads with `resources/read` or `GET`, though a `full` subscription's result also carries the contents) |
-| **Poll for changes** | `resources/read` on a cadence, which returns the whole contents every time, with nothing to say whether they changed | a conditional `GET` with `If-None-Match`, answered `304 Not Modified` when nothing changed | `events/poll` with a cursor | (none, for now) |
+| **Poll for changes** | `resources/read` on a cadence, which returns the whole contents every time, with nothing to say whether they changed | a conditional `GET` with `If-None-Match`, answered `304 Not Modified` when nothing changed | `events/poll` with a cursor, which level 1 leaves out | (none, for now) |
 | **Be told of changes** | `notifications/resources/updated` on an open `subscriptions/listen` stream, naming only the URI | (none) | a webhook POST naming the URI | a webhook POST with the new version, and the contents or a patch if asked for |
 
 Level 1 takes the first three columns, in Scenarios 1a, 1b and 2. Level 2 takes the last, from Scenario 3 on.
@@ -217,7 +217,7 @@ A lists the type in `events/list`, as Open Question 2 sketches it, carrying in `
 ```jsonc
 { "name": "mcp.resource.updated",
   "description": "A resource changed",
-  "delivery": ["poll", "webhook"],
+  "delivery": ["webhook"],
   "inputSchema": { "type": "object", "required": ["uri"],
                    "properties": { "uri": { "type": "string" } } },
   "payloadSchema": { "type": "object", "required": ["uri"],
@@ -239,7 +239,7 @@ A lists the type in `events/list`, as Open Question 2 sketches it, carrying in `
 // A → b, after SEP-3415's verification handshake with B
 { "resultType": "complete", "id": "sub_7c2e91d04ab35f68",
   "refreshBefore": "2026-10-21T15:00:00Z",
-  "cursor": "cursor_0041", "truncated": false }
+  "cursor": null, "truncated": false }   // A offers no replay
 ```
 
 `a` marks the note done through `write_note`. A POSTs an ordinary occurrence to B, with SEP-3415's signed headers, and B passes it down `b`'s socket:
@@ -248,14 +248,15 @@ A lists the type in `events/list`, as Open Question 2 sketches it, carrying in `
 { "eventId": "evt_0042", "name": "mcp.resource.updated",
   "timestamp": "2026-10-21T14:05:00Z",
   "data": { "uri": ".../server/A/notes/inbox/note-42" },
-  "cursor": "cursor_0042" }
+  "cursor": null }
 ```
 
 `b` then reads the note with `resources/read`, as in Scenario 1a.
 
 - **Nothing here is new.** It is SEP-3415's methods and webhook rules, an event type named as Open Question 2 sketches it, and B as the gateway in SEP-3415's forward-proxy deployment. That is Goal 1.
 - **Each change costs two round trips,** the notification and the read, and the notification says only that something changed.
-- **Catching up after an absence depends on A keeping its history of events.** SEP-3415 replays from `b`'s cursor when the type "is backed by a durable upstream". Otherwise delivery restarts from now, and `b` cannot tell what it missed. A replay also sends every change, though `b` needs only the latest of each note.
+- **After an absence, `b` cannot tell what it missed.** A offers no replay, which SEP-3415 allows, so its cursors are `null` and a refresh restarts delivery from now. `b` re-reads every note it cares about.
+- **Replay would cost A state that state sync does without.** A would keep a history of the type's events, and a watermark for each subscription, as § *Cursors, versions and IDs* shows. A replay would still send every change, though `b` needs only the latest of each note. State-sync services that use webhooks keep no watermark, because the client's cursor comes from its own call: Dropbox's notification names only the account, and the app calls `files/list_folder/continue` with the cursor it stored. Level 2 needs neither a history nor a watermark for one resource, since the version `b` names on a refresh is its catch-up.
 
 Level 2 removes those last two costs.
 
@@ -394,7 +395,7 @@ A refresh is the same subscribe call, made again with the same `uri` and `delive
                       "lastDeliveryAt": "2026-10-21T15:34:00Z" } }
 ```
 
-- **A refresh is the catch-up,** and it goes straight from A to `b`, not through B. However much `b` missed, this one call brings it to the current version, where level 1 needed A's history of events to replay.
+- **A refresh is the catch-up,** and it goes straight from A to `b`, not through B. However much `b` missed, this one call brings it to the current version, where level 1 had nothing to replay.
 - **`deliveryStatus` is SEP-3415's.** Here it reports the failed attempts at `v5`, with delivery still active, since retries running out is not a suspension.
 
 #### What a receiver's answer means
@@ -601,7 +602,8 @@ type ResourceChange = { uri: string } & (
 | The subscriber is a client behind a gateway: `b` subscribes with A directly, naming B's webhook URL, and B passes each delivery down `b`'s WebSocket (Larry, 2026-10-21) | A mirror, where B subscribes and serves copies to `b`: further from SEP-3415's forward-proxy deployment and from Lumenize's Gateway, and it leaves out the case most MCP clients are in, unable to receive a webhook. Both at once: twice the cast before either has run. A relay that stores deliveries and never holds the secret, as evdock does: a storage write for every delivery. |
 | The server and the gateway are Durable Object classes of their own, `Server` and `Gateway`, each composing a module for its role (Larry, 2026-10-21) | One class for both: it blurs the line SEP-3415 draws between a server and a webhook endpoint, suggests that a server hosts its clients' gateways, carries storage the gateway never uses, and ties the gateway to the notes so it could not also receive deliveries from an Events server. |
 | The leg between the gateway and its client is a WebSocket in this prototype, and outside both SEPs (Larry, 2026-10-21) | Specifying it: SEP-3415 leaves the channel to the endpoint, and stdio or anything else that carries a message each way would serve. |
-| This extension leaves polling out, for now (Larry, 2026-10-20) | A poll method: an `https` resource is already polled with a conditional `GET`, and level 1's type can offer `events/poll`. |
+| Level 1 offers no replay: its cursors are `null`, as SEP-3415 allows for a type without one (Larry, 2026-10-25) | Replay from an in-memory buffer: a history and a watermark per subscription, built only to show that state sync does without them. Replay from a durable log: a storage write for every change. |
+| This extension leaves polling out, for now (Larry, 2026-10-20) | A poll method: an `https` resource is already polled with a conditional `GET`, and level 1's type could offer `events/poll`, though A keeps no history to serve it from. |
 | Collections are in scope: a folder, a URI template, or every listed resource (Larry, 2026-10-20) | Deferring them: they raise the questions only an implementation answers, which is what a prototype is for. |
 | Subscribing requires an authenticated principal, as SEP-3415 does, from MCP's OAuth flow with an authorization server that verifies no identity, as Peter's reference server has (Larry, 2026-10-20) | Anonymous callers sharing one principal: any of them could unsubscribe another or replace its secret. A login endpoint handing out a random token: the same idea outside the OAuth flow every MCP client already speaks. Requiring the old secret to unsubscribe or rotate: a client that lost its secret could only wait out the TTL, and the secret, held by gateways, would become a credential. |
 | Endpoint verification is cached per `(principal, delivery.url, delivery.secret)` (Larry, 2026-10-20) | Per `(principal, url)`, as SEP-3415 does: a principal that verified a webhook URL once could subscribe it again with a secret the receiver never held, and flood it. Per `(url, secret)` alone: two principals holding one secret would share a verification, which SEP-3415 rules out. |
