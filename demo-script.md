@@ -8,9 +8,9 @@ Picture a client watching a note. Its laptop closes, the note changes three time
 
 Re-expressing today's resource notification as an event sits on top of the Events SEP with nothing added, using the event type its Open Question 2 sketches. So we'll start there, and demo it quickly. It is also the baseline that everything after it is measured against.
 
-The more interesting question is Open Question 6, on exposing a task's state changes as events, together with Peter's question on the SEP's thread, whether watching state is really the same abstraction as consuming messages. That is where prototyping pays off, so I built [N] flavors of state synchronization. They differ mostly in how much they add to or change in the SEPs underneath them, traded against how elegant the result is for keeping state in sync.
+The question the rest of the demo takes up is Peter's, from the SEP's thread: whether watching state is the same abstraction as consuming messages. He suggested it may need different APIs on the same machinery. On that thread I said I'd build state as event types on the Events SEP's own methods, and I will. But Peter's version is the one I built first: resources get two methods of their own, and use the Events SEP's webhook rules unchanged. Comparing the [N] flavors is how we'll see where the API has to diverge.
 
-Think of this work as state synchronization prototypes. The state they keep in sync, though, is a resource's rather than a task's. A resource already has a URI and contents, where a task brings the Tasks extension along with it, and we expect much of what we learn to carry over to tasks, a question for the Tasks side of this working group.
+The state here is a resource's rather than a task's, since a resource already has a URI and contents. Whether what we learn carries over to Open Question 6's tasks is a question for the Tasks side of this working group.
 
 ## The beats
 
