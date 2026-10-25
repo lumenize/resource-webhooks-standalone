@@ -3,6 +3,7 @@
 // `wrangler dev` with CONFORMANCE set on the command line and fresh storage, runs the suite's
 // 2026-07-28 requirement set with this repo's baseline, and exits with the suite's own code.
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,7 +32,7 @@ const storage = mkdtempSync(join(tmpdir(), 'conformance-'));
 // Its own process group, so stopping it stops workerd too.
 const dev = spawn(
   'node_modules/.bin/wrangler',
-  ['dev', '-c', 'wrangler.conformance.jsonc', '--port', String(PORT), '--var', 'CONFORMANCE:on', '--persist-to', storage],
+  ['dev', '-c', 'wrangler.conformance.jsonc', '--port', String(PORT), '--var', 'CONFORMANCE:on', '--var', `TOKEN_SIGNING_KEY:${randomUUID()}${randomUUID()}`, '--persist-to', storage],
   { stdio: ['ignore', 'pipe', 'pipe'], detached: true },
 );
 let devLog = '';

@@ -25,3 +25,20 @@ server:
   - input-required-result-tampered-state:sep-2322-reject-tampered-state
   - input-required-result-capability-check:sep-2322-respect-client-capabilities
   - input-required-result-ignore-extra-params:sep-2322-ignore-unexpected-params
+client:
+  # The client speaks one protocol version, so it has no other to retry with.
+  - request-metadata:sep-2575-client-retry-supported-version
+  # It registers by Dynamic Client Registration, as A's authorization server needs, and hosts
+  # no client ID metadata document.
+  - auth/basic-cimd:cimd-client-id-used
+  # It sends no inputResponses, since A asks a client for no input.
+  - sep-2322-client-request-state:sep-2322-client-jsonrpc-id-different
+  - sep-2322-client-request-state:sep-2322-client-no-state-omitted
+  - sep-2322-client-request-state:sep-2322-client-parallel-isolation
+  - sep-2322-client-request-state:sep-2322-client-request-state-echoed
+  - sep-2322-client-request-state:sep-2322-default-result-type-complete
+  # It mirrors no arguments into Mcp-Param headers, since A's tools declare none.
+  - http-custom-headers:sep-2243-client-base64-unsafe
+  - http-custom-headers:sep-2243-client-encode-values
+  - http-custom-headers:sep-2243-client-omit-null
+  - http-custom-headers:sep-2243-client-supports-custom-headers

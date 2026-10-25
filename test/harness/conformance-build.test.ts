@@ -2,6 +2,7 @@
 // localhost, so a deploy of it by mistake serves nothing.
 import { createTestHarness } from 'wrangler';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { HARNESS_SECRETS } from './sign-in';
 
 const ENVELOPE = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} };
 
@@ -14,7 +15,7 @@ function toolsList(server: ReturnType<typeof createTestHarness>, host: string) {
 }
 
 describe('with CONFORMANCE set', () => {
-  const server = createTestHarness({ workers: [{ configPath: './wrangler.conformance.jsonc', vars: { CONFORMANCE: 'on' } }] });
+  const server = createTestHarness({ workers: [{ configPath: './wrangler.conformance.jsonc', vars: { CONFORMANCE: 'on' }, secrets: HARNESS_SECRETS }] });
   beforeAll(() => server.listen());
   afterAll(() => server.close());
 
@@ -33,7 +34,7 @@ describe('with CONFORMANCE set', () => {
 });
 
 describe('without CONFORMANCE', () => {
-  const server = createTestHarness({ workers: [{ configPath: './wrangler.conformance.jsonc' }] });
+  const server = createTestHarness({ workers: [{ configPath: './wrangler.conformance.jsonc', secrets: HARNESS_SECRETS }] });
   beforeAll(() => server.listen());
   afterAll(() => server.close());
 

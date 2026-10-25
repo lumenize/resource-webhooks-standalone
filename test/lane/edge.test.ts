@@ -11,6 +11,8 @@ async function serverIds(): Promise<string[]> {
 
 it("refuses another origin with 403 on every route, a preflight included, and wakes no object", async () => {
   const lane = newLane();
+  // Signing in wakes this lane's A, so the list is taken after it.
+  await lane.token();
   const before = await serverIds();
   const attempts: [string, string][] = [
     ['GET', '/notes/inbox/note-42'],
@@ -33,8 +35,9 @@ it("refuses another origin with 403 on every route, a preflight included, and wa
   }
   expect(await serverIds()).toEqual(before);
 
-  // The same requests from the Worker's own origin do wake A, so the list above can change.
-  const own = await lane.fetch('/notes/inbox', { headers: { Origin: env.ORIGIN } });
+  // The same request from the Worker's own origin reaches an A, so the list above can change.
+  const other = newLane();
+  const own = await other.fetch('/notes/inbox', { headers: { Origin: env.ORIGIN } });
   expect(own.status).toBe(200);
   expect(own.headers.get('Access-Control-Allow-Origin')).toBe(env.ORIGIN);
   expect(await serverIds()).toHaveLength(before.length + 1);
@@ -78,6 +81,7 @@ it('routes only the instance it names, and only the paths and methods its table 
 
 it('answers a method the table does not list for a path it does with 405, naming the ones it does', async () => {
   const lane = newLane();
+  await lane.token();
   const before = await serverIds();
   const refused: [string, string, string][] = [
     ['POST', '/notes/inbox/note-1', 'GET, HEAD, PUT, DELETE'],

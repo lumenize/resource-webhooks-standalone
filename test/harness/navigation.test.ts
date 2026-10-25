@@ -4,8 +4,9 @@
 import { request as httpRequest } from 'node:http';
 import { createTestHarness } from 'wrangler';
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import { HARNESS_SECRETS, signIn } from './sign-in';
 
-const server = createTestHarness({ workers: [{ configPath: './wrangler.jsonc' }] });
+const server = createTestHarness({ workers: [{ configPath: './wrangler.jsonc', secrets: HARNESS_SECRETS }] });
 const ORIGIN = 'https://resource-webhooks-standalone.transformation.workers.dev';
 let base: URL;
 
@@ -40,9 +41,16 @@ it('serves the page at /', async () => {
 });
 
 it('sends a navigation to /authorize, and to a note, to the Worker', async () => {
-  const put = await server.fetch(`${ORIGIN}/server/A/notes/inbox/note-42`, { method: 'PUT', body: '{"title":"Buy milk"}' });
+  const put = await server.fetch(`${ORIGIN}/server/A/notes/inbox/note-42`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${await signIn(server, ORIGIN)}` },
+    body: '{"title":"Buy milk"}',
+  });
   expect(put.status).toBe(201);
 
-  expect(await navigate('/authorize')).toEqual({ status: 404, body: 'Not Found' });
+  // A's authorization endpoint answers, refusing a request that names no client.
+  const authorize = await navigate('/authorize');
+  expect(authorize.status).toBe(400);
+  expect(JSON.parse(authorize.body)).toMatchObject({ error: 'invalid_client' });
   expect(await navigate('/server/A/notes/inbox/note-42')).toEqual({ status: 200, body: '{"title":"Buy milk"}' });
 });

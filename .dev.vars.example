@@ -1,3 +1,6 @@
 # Template for .dev.vars, which holds this repo's local secrets and stays gitignored.
 # `npm run types` reads this file, so every secret the code reads is named here, with no
 # value. Settings that are not secret live in wrangler.jsonc's `vars`.
+
+# Signs A's tokens, client ids, client secrets and codes. Any long random string.
+TOKEN_SIGNING_KEY=

@@ -15,7 +15,8 @@
     "types": "wrangler types --env-file .dev.vars.example --strict-vars false",
     "generate:schema": "node scripts/generate-schemas.mjs",
     "check:schema": "node scripts/generate-schemas.mjs --check",
-    "conformance": "node scripts/conformance.mjs"
+    "conformance": "node scripts/conformance.mjs",
+    "conformance:client": "npx --yes @modelcontextprotocol/conformance@0.2.0-alpha.12 client --command \"node scripts/conformance-client.mjs\" --requirements 2026-07-28 --expected-failures ./conformance-baseline.yml"
   },
   "dependencies": {
     "@cfworker/json-schema": "4.1.1"

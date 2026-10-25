@@ -9,8 +9,15 @@ export default defineConfig({
         plugins: [
           cloudflareTest({
             wrangler: { configPath: './wrangler.jsonc' },
-            // A minute, so a test reaches the cut-off by moving the clock past it.
-            miniflare: { bindings: { CUTOFF_WINDOW_MS: '60000' } },
+            miniflare: {
+              bindings: {
+                // A minute, so a test reaches the cut-off by moving the clock past it.
+                CUTOFF_WINDOW_MS: '60000',
+                // Small, so a test reaches the cap.
+                REGISTRATION_CAP: '5',
+                TOKEN_SIGNING_KEY: 'test-signing-key-for-the-vitest-plugin-lane-only',
+              },
+            },
           }),
         ],
         test: {

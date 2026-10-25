@@ -11,11 +11,11 @@ const ENVELOPE = {
   'io.modelcontextprotocol/clientCapabilities': {},
 };
 
-// A POST built by hand, so a test can send what the client never would.
-function post(lane: Lane, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
+// A POST built by hand, with the lane's token, so a test can send what the client never would.
+async function post(lane: Lane, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
   return lane.fetch('/mcp', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await lane.token()}`, ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
 }

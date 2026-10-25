@@ -16,6 +16,8 @@
     // The suite's DNS-rebinding check sends this exact origin, port included.
     "ORIGIN": "http://localhost:8788",
     "SERVER_INSTANCE": "A",
+    "GATEWAY_INSTANCE": "B",
+    "REGISTRATION_CAP": "1000",
     "CUTOFF_WINDOW_MS": "86400000"
   },
   "dev": { "port": 8788, "ip": "localhost" }

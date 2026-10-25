@@ -17,8 +17,11 @@
     // The Worker's own origin, and the only one whose requests it accepts. A constant per
     // environment, never computed from a request.
     "ORIGIN": "https://resource-webhooks-standalone.transformation.workers.dev",
-    // The one instance under /server the edge routes to: A.
+    // The one instance under /server the edge routes to, A, and under /gateway, B.
     "SERVER_INSTANCE": "A",
+    "GATEWAY_INSTANCE": "B",
+    // How many clients may register with A's authorization server between Wipes.
+    "REGISTRATION_CAP": "1000",
     // How long A keeps a superseded version, or a deletion, before a later write prunes it.
     "CUTOFF_WINDOW_MS": "86400000"
   },

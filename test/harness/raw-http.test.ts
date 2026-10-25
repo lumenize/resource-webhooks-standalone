@@ -4,8 +4,10 @@
 import { request as httpRequest } from 'node:http';
 import { createTestHarness } from 'wrangler';
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import { HARNESS_SECRETS, signIn } from './sign-in';
 
-const server = createTestHarness({ workers: [{ configPath: './wrangler.jsonc' }] });
+const server = createTestHarness({ workers: [{ configPath: './wrangler.jsonc', secrets: HARNESS_SECRETS }] });
+const ORIGIN = 'https://resource-webhooks-standalone.transformation.workers.dev';
 let base: URL;
 
 beforeAll(async () => {
@@ -36,7 +38,12 @@ it('ignores the whitespace around a mirrored header value, as RFC 9110 does', as
     method: 'tools/list',
     params: { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} } },
   });
-  const answer = await post('/server/A/mcp', body, { 'MCP-Protocol-Version': '2026-07-28 ', 'Mcp-Method': 'tools/list \t' });
+  const token = await signIn(server, ORIGIN);
+  const answer = await post('/server/A/mcp', body, {
+    Authorization: `Bearer ${token}`,
+    'MCP-Protocol-Version': '2026-07-28 ',
+    'Mcp-Method': 'tools/list \t',
+  });
   expect(answer.status).toBe(200);
   expect(JSON.parse(answer.body)).toMatchObject({ id: 1, result: { resultType: 'complete' } });
 });
