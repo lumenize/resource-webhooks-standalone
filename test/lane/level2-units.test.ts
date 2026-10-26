@@ -6,6 +6,7 @@ import { Copies, type Held } from '../../src/client/copies';
 import type { ResourceChange, ResourceWebhookSubscribeResult } from '../../src/resource-webhooks-types';
 import { declared, patchBetween, ResourceWebhooks, type ResourceWebhooksOptions } from '../../src/server-role/resource-webhooks';
 import { subscriptionId } from '../../src/server-role/subscriptions';
+import { listPath, listUri } from '../../src/server-role/targets';
 
 describe("a subscription's id", () => {
   it('changes with the hash key alone, and is the same for the same key', async () => {
@@ -23,6 +24,23 @@ describe('the page size', () => {
       expect(() => new ResourceWebhooks({ pageSize } as ResourceWebhooksOptions)).toThrow(RangeError);
     }
     expect(() => new ResourceWebhooks({ pageSize: 1 } as ResourceWebhooksOptions)).not.toThrow();
+  });
+});
+
+describe("A's lists scheme", () => {
+  it('maps a lists URI to a list path and back, a top-level list and a name holding list- included', () => {
+    for (const [uri, path] of [
+      ['lists:///inbox/groceries', '/lists/inbox/list-groceries'],
+      ['lists:///7', '/lists/list-7'],
+      ['lists:///a/b/list-c', '/lists/a/b/list-list-c'],
+    ]) {
+      expect([listPath(uri), listUri(path)]).toEqual([path, uri]);
+    }
+  });
+
+  it('refuses a name or segment a URL would normalize, or an empty one, both ways', () => {
+    for (const uri of ['lists:///inbox/..', 'lists:///inbox/.', 'lists:///', 'lists:///inbox/', 'lists:///../x']) expect(listPath(uri)).toBeUndefined();
+    for (const path of ['/lists/inbox/list-..', '/lists/inbox/list-.', '/lists/inbox/list-', '/lists/inbox/groceries']) expect(listUri(path)).toBeUndefined();
   });
 });
 
@@ -145,6 +163,14 @@ describe("b's copies", () => {
     });
     await expect(copies.refresh({ uri })).rejects.toThrow('needs `read`');
     expect(calls).toBe(1);
+  });
+
+  it("keeps a patched entry's other _meta keys, and drops the version it was patched from", async () => {
+    const key = 'io.modelcontextprotocol/resource-webhooks.version';
+    const copies = new Copies(async () => result({ version: 'v1', contents: [{ uri, mimeType: 'application/json', text: '{"title":"One"}', _meta: { [key]: 'v1', 'com.example/source': 'notes' } }] }));
+    await copies.refresh({ uri });
+    copies.deliver({ uri, form: 'patch', version: 'v2', fromVersion: 'v1', mergePatch: { title: 'Two' } });
+    expect(copies.get(uri)?.contents).toEqual([{ uri, mimeType: 'application/json', text: '{"title":"Two"}', _meta: { 'com.example/source': 'notes' } }]);
   });
 
   it("tells onError of a member's read again that failed", async () => {

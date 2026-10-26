@@ -8,7 +8,8 @@ export const TYPES = {
 
 export type TypeName = keyof typeof TYPES;
 
-// A path segment uses only URL-unreserved characters, so no URI A serves needs escaping.
+// A path segment uses only URL-unreserved characters and starts with a letter or digit, so no
+// URI A serves needs escaping, and none holds a `.` or `..` segment that a URL would normalize.
 const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 
 export interface Target {
@@ -43,14 +44,25 @@ export const LISTS_SCHEME = 'lists:///';
 export function listPath(uri: string): string | undefined {
   if (!uri.startsWith(LISTS_SCHEME)) return undefined;
   const segments = uri.slice(LISTS_SCHEME.length).split('/');
-  const name = segments.pop();
-  if (!name) return undefined;
+  const name = segments.pop()!;
+  // The name is a segment in its own right in the URI, so `.` and `..` would be normalized away.
+  if (!SEGMENT.test(name)) return undefined;
   const path = `/lists/${[...segments, `list-${name}`].join('/')}`;
   return parseTarget(path)?.resource ? path : undefined;
+}
+
+/**
+ * Every `lists:` URI that covers a list's, its own and each above it at a segment boundary, as
+ * `lists:///inbox` and `lists:///inbox/groceries` for the latter, by R18's rule for a sub-resource.
+ */
+export function coveringListUris(uri: string): string[] {
+  const segments = uri.slice(LISTS_SCHEME.length).split('/');
+  return segments.map((_segment, index) => `${LISTS_SCHEME}${segments.slice(0, index + 1).join('/')}`);
 }
 
 /** The `lists:` URI of a list's path, as `lists:///inbox/groceries`, or undefined for any other path. */
 export function listUri(path: string): string | undefined {
   const match = /^\/lists\/(?:(.+)\/)?list-([^/]+)$/.exec(path);
-  return match ? `${LISTS_SCHEME}${match[1] ? `${match[1]}/` : ''}${match[2]}` : undefined;
+  // A list whose name is not a segment of its own, as `list-` or `list-..`, has no `lists:` URI.
+  return match && SEGMENT.test(match[2]) ? `${LISTS_SCHEME}${match[1] ? `${match[1]}/` : ''}${match[2]}` : undefined;
 }

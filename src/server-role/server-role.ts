@@ -306,7 +306,7 @@ export class ServerRole {
     return undefined;
   }
 
-  // Every entry A serves names its version, under the extension's provisional key (R47).
+  // Every entry of A's own resources names its version, under the extension's provisional key (R47).
   #entry(uri: string, text: string, version: string): TextResourceContents {
     return { uri, mimeType: 'application/json', text, _meta: { [RESOURCE_VERSION_META_KEY]: version } };
   }

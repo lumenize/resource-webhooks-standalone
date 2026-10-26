@@ -373,6 +373,16 @@
             ],
             "description": "A resource's contents, as `resources/read` returns them."
         },
+        "ResourceContentsMetaObject": {
+            "description": "Extends {@link MetaObject} with the version this extension adds to each entry of a read's\n`contents` (R47). All key naming rules from `MetaObject` apply.",
+            "properties": {
+                "io.modelcontextprotocol/resource-webhooks.version": {
+                    "description": "The resource's version, as a delivery names it: for an `https` resource, its `ETag` (R4).",
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
         "ResourceWebhookForm": {
             "description": "How a delivery or a result carries a change: `notify` names the version only, `full` adds the\ncontents, and `patch` a merge patch from a version the client holds.",
             "enum": [

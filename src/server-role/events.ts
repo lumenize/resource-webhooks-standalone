@@ -96,7 +96,7 @@ export class Events {
     const extra = Object.keys(args).filter((key) => key !== 'uri');
     const uri = args.uri;
     if (typeof uri !== 'string' || extra.length > 0 || !this.#serves(uri)) {
-      throw new JsonRpcError(INVALID_PARAMS, 'arguments must be { uri } naming a resource or folder this server holds');
+      throw new JsonRpcError(INVALID_PARAMS, 'arguments must be { uri } naming an https resource or folder this server holds');
     }
     return { targetKind: TARGET_KIND, target: uri, principal, url: params.delivery.url };
   }

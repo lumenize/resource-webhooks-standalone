@@ -10,8 +10,9 @@
 // to whichever call is out. It applies a merge patch only to the version the patch starts from,
 // and otherwise refreshes one resource or reads a collection's member again, which needs `read`
 // (R45). Besides types
-// it imports only the copied merge patch, by its `.ts` path, so Node runs it with types stripped.
-import type { ResourceChange, ResourceContents, ResourceWebhookSubscribeResult } from '../resource-webhooks-types';
+// it imports the copied merge patch and the version's `_meta` key, by `.ts` paths, so Node runs it
+// with types stripped.
+import { RESOURCE_VERSION_META_KEY, type ResourceChange, type ResourceContents, type ResourceWebhookSubscribeResult } from '../resource-webhooks-types.ts';
 import { applyMergePatch, type JsonValue } from '../vendor/lumenize-merge-patch/merge-patch.ts';
 
 export interface Copy {
@@ -270,9 +271,11 @@ function patched(held: Copy | undefined, fromVersion: string | undefined, versio
   } catch {
     return undefined;
   }
-  // The entry's `_meta` named the version patched from, so the patched entry carries none.
-  const { _meta: _old, ...rest } = entry;
-  return { version, deleted: false, contents: [{ ...rest, text: JSON.stringify(applyMergePatch(value, mergePatch as JsonValue)) }] };
+  // The entry's `_meta` named the version patched from, so the patched entry drops that key alone.
+  const { _meta, ...rest } = entry;
+  const { [RESOURCE_VERSION_META_KEY]: _patchedFrom, ...meta } = _meta ?? {};
+  const patchedEntry = { ...rest, ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}), text: JSON.stringify(applyMergePatch(value, mergePatch as JsonValue)) };
+  return { version, deleted: false, contents: [patchedEntry] };
 }
 
 function keyOf(target: Target): string {

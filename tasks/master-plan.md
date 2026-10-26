@@ -367,7 +367,7 @@ Before answering, A verifies that the webhook URL wants deliveries, by SEP-3415'
                   "text": "{\"title\":\"Buy milk\"}" } ] }
 ```
 
-- **The result is `b`'s first copy.** It names `v1` and carries the contents, since the request asked for them, so one call both subscribes and reads. In level 1, `b` subscribed and then read, and the read named no version.
+- **The result is `b`'s first copy.** It names `v1` and carries the contents, since the request asked for them, so one call both subscribes and reads. In level 1, `b` subscribed and then read, and only the read named a version, in its `_meta`, since an occurrence carries none.
 - **`b` holds nothing until this result arrives,** which is why its request names no version.
 
 #### Scenario 4: a change it hears about
@@ -606,11 +606,12 @@ For a resource whose contents are JSON, a delivery can carry an RFC 7396 merge p
 
 #### Resources without an `https` URI
 
-Many MCP resources use `file://`, `git://` or a scheme of their own, and a client reads them with `resources/read`, which carries no version today, as Scenario 1a shows. In a phase after the `https` one, each entry of a read's `contents` carries its version in `_meta`, under a key to be agreed with the Filesystems working group, whose strawman gives each resource a `version` too, and with the Transports working group's Definition Tags in view:
+Many MCP resources use `file://`, `git://` or a scheme of their own, and a client reads them with `resources/read`, which in MCP's core carries no version, as Scenario 1a shows. So each entry of a read's `contents` carries its version in `_meta` (R47), under a provisional key until one is agreed with the Filesystems working group, whose strawman gives each resource a `version` too, and with the Transports working group's Definition Tags in view:
 
 ```jsonc
 { "contents": [ { "uri": "file:///project/notes.md", "mimeType": "text/markdown",
-                  "text": "...", "_meta": { "<agreed key>": "v12" } } ] }
+                  "text": "...",
+                  "_meta": { "io.modelcontextprotocol/resource-webhooks.version": "v12" } } ] }
 ```
 
 A `notify` delivery then tells the client to read, and the read's version tells it whether it got the delivered version or a later one.
@@ -619,7 +620,7 @@ A serves its lists a second way for this phase, under a scheme of its own, as `l
 
 #### What the extension adds to the wire
 
-Everything about delivering a webhook is SEP-3415's. The extension adds a capability, two methods, their parameters and results, and the body a change delivers, written in the spec's style and built on `schema.ts`'s own types. The `patch` form adds a variant to `ResourceChange`, and a patch to the result, in its phase.
+Everything about delivering a webhook is SEP-3415's. The extension adds a capability, two methods, their parameters and results, the body a change delivers, and a key in a read entry's `_meta` (R47), written in the spec's style and built on `schema.ts`'s own types. The `patch` form adds a variant to `ResourceChange`, and a patch to the result, in its phase.
 
 A declares the extension in `server/discover`, which is how `b` learns that A offers `full` and `patch` (R1):
 
@@ -740,7 +741,7 @@ None.
 | The design has two levels, demoed in order: `mcp.resource.updated` over Events as Open Question 2 sketches it, then resource state sync in this extension's own methods (Larry, 2026-10-22) | State sync on Events' methods too: that is the flavor that extends Events, kept for the later comparison. Going straight to state sync: it skips the floor a sponsor can accept without argument, and the baseline the second level is measured against. |
 | The demo's details beyond its first beats, such as the page's controls and the narration from Scenario 3 on, wait until Larry rehearses them after the build (Larry, 2026-10-25) | Settling them now: a prototype's demo UI changes heavily once rehearsed, and questions about it are answered best by rehearsing. |
 | The floor is Open Question 2 as written, and level 2 answers what Open Question 6 and Peter's comment of 2026-10-16 opened, proved on resources first (Larry, 2026-10-22) | Presenting state sync as the answer to Open Question 2: its sketch carries only a URI, so the claim would overreach. Starting with tasks: they bring in the Tasks extension, where a resource already has a URI and contents. |
-| Level 2 starts from a clean slate: the demo's Wipe button empties all four parties after level 1 (Larry, 2026-10-23) | Carrying `b`'s copy over from level 1: level 1's read names no version, so `b` would hold a version it never learned, and the line between notification and state sync would blur. |
+| Level 2 starts from a clean slate: the demo's Wipe button empties all four parties after level 1 (Larry, 2026-10-23) | Carrying `b`'s copy over from level 1: `b` would start level 2 holding a version learned from a read rather than from the subscription, and the line between notification and state sync would blur. |
 | The demo writes through A's `write_note` tool first, in Scenario 1a, and through `PUT` only in Scenario 1b's plain-HTTP baseline (Larry, 2026-10-22) | `PUT` first: plain HTTP is not MCP, and the floor should be MCP end to end. |
 | The standalone flavor is built first, with its own methods and SEP-3415's webhook rules taken by reference, as the test of Peter's "different APIs" (Larry, 2026-10-20, and kept after Stage 1 on 2026-10-24) | A flavor on Events' own methods first, as Larry's comment of 2026-10-16 described, which kept `state` inside SEP-3415. Extending Events: a second extension on Events' own methods, whose rules it would override for a type, built before the flavor it is compared with. Amending Events: changes to SEP-3415's own text while it is in review. The standalone flavor changes nothing in SEP-3415's text, and is the easiest to build. |
 | Resources, not state in general (Larry, 2026-10-20) | A general state contract: it needs a key, a value type and a way to offer it on any event type, all new vocabulary, where a resource already has a URI and contents. |
@@ -1287,16 +1288,25 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 **For Larry.**
 
 - **Your rehearsed beat 2 says nothing in the read names a version, and the page now shows one.** The plan has A name the version in `_meta` on every read it serves, `https` included, so beat 2's `resources/read` shows it, and the browser test now checks for it. Either the narration changes, or A names the version only for a client that declared the extension, which would keep beat 2 as MCP core is and still serve the clients that need it. I left `demo-script.md` as it is.
-- **The provisional key is `io.modelcontextprotocol/resource-webhooks.version`.** MCP's rules give a `_meta` key's prefix dot-separated labels, which cannot hold the slash in the extension's identifier, so this is the nearest key in its namespace. R47 names it, and sep-notes.md's § *Pending* keeps it open.
-- **`lists:///inbox/groceries` is the list at `/lists/inbox/list-groceries`.** A's rule that a list's last segment starts `list-` makes `/lists/inbox/groceries` a folder, so the scheme adds the prefix, names lists only, and so `lists:///inbox` is a list called `inbox`. A lists no `lists:` URI in `resources/list` and serves no template for the scheme.
+- **The provisional key is `io.modelcontextprotocol/resource-webhooks.version`,** one of three keys MCP's rules allow for it. This one extends the extension's identifier with a dot, under the prefix `io.modelcontextprotocol/`, which core keys such as `serverInfo` share. `io.modelcontextprotocol.resource-webhooks/version` would give the extension a prefix of its own, and `{"io.modelcontextprotocol/resource-webhooks": {"version": …}}` would key it by the identifier, as `capabilities.extensions` does. R47 names the first, and sep-notes.md's § *Pending* keeps it open.
+- **Phase 10 also made level 1's read name a version, which two of your decisions leaned on.** The plan's Scenario 3 said level 1's read named none, and the Decisions row for the Wipe rejected carrying `b`'s copy over because level 1's read named no version. Both now say what the build does, and the Wipe's reason rests on the line between notification and state sync alone. Beat 2, in the bullet above, is the same change seen in the demo.
+- **`lists:///inbox/groceries` is the list at `/lists/inbox/list-groceries`.** A's rule that a list's last segment starts `list-` makes `/lists/inbox/groceries` a folder, so the scheme adds the prefix and names lists only. So `lists:///inbox` is a list called `inbox`, and by R18's path rule `lists:///inbox/groceries` is its sub-resource, which a subscription to `lists:///inbox` hears about. A lists no `lists:` URI in `resources/list` and serves no template for the scheme, though a client's own template over it matches.
 
 **Retro.**
 
 - **Each read entry A serves carries its version,** in a folder's read, a delivery's `full` contents and a catch-up's alike. A patched copy in `Copies` drops its entry's `_meta`, which named the version it was patched from.
-- **A write to a list is delivered under each URI a subscription named it by,** `https` or `lists:`, each in its own queue slot, and a catch-up's contents name the URI the subscription named.
-- **Fifteen tests compared entries exactly,** and each now expects the version, through a helper, `versioned`, in the test client.
+- **A write to a list is delivered under each URI a subscription covers it by,** `https` or `lists:`, each in its own queue slot: by the `lists:` URI to a subscription naming it or a list above it, and to a template its `lists:` URI matches. A catch-up's contents and changes name the URI the subscription covers it by.
+- **Every test that compared a read entry exactly now expects its version,** through a helper, `versioned`, in the test client.
 - **7 mutations, all caught by the test aimed at them on the first run.**
-- **The full suite passes, 388 tests, 4 more than phase 9 left,** both type-checks pass, both conformance gates still exit 0 at their baselines, and the deployed tier passes its six files on a fresh deploy.
+- **The verifier found no blocker, three major issues and eight minor ones, all fixed or recorded:**
+  - A list under another list's `lists:` URI, as `lists:///inbox/groceries` under `lists:///inbox`, was not delivered to a subscription naming the outer one, against R18, though `Copies` counted it covered.
+  - A `uriTemplate` over the `lists:` scheme was accepted and then never caught up or delivered, against R19.
+  - Two plan sentences, as the second bullet for you says.
+  - Minor ones: a list named `.` or `..` mapped to a `lists:` URI a URL normalizes away, so both directions now refuse such a name; R47 read two ways for a list with two URIs, and now keys off the entry's own `uri`; the key had no type, and the types now declare it on a `MetaObject` subtype, as the spec does `serverInfo`; `Copies` dropped a patched entry's whole `_meta`, and now drops only the version; and several comments and the plan's § *Resources without an `https` URI* lagged the build.
+  - The bytes finding was re-measured, since a `full` body now carries its version: 416 and 1600 bytes where phase 9 measured 347 and 1531.
+  - Accepted: the conformance build's fixtures carry no version, since nothing can subscribe to them, and Scenario 1a's example block shows MCP core's read, with the bullet under it naming the key A adds.
+- **Seven more mutations against the verifier's fixes, all caught by the test aimed at them.**
+- **The full suite passes, 394 tests, 10 more than phase 9 left,** both type-checks pass, both conformance gates still exit 0 at their baselines, and the deployed tier passes its six files on a fresh deploy.
 
 **Close-out.**
 

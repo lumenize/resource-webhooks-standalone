@@ -6,6 +6,7 @@ import type {
   BlobResourceContents,
   JSONRPCRequest,
   JSONValue,
+  MetaObject,
   RequestParams,
   Result,
   TextResourceContents,
@@ -20,6 +21,15 @@ export const RESOURCE_WEBHOOKS_EXTENSION = 'io.modelcontextprotocol/resource-web
  * working group.
  */
 export const RESOURCE_VERSION_META_KEY = 'io.modelcontextprotocol/resource-webhooks.version';
+
+/**
+ * Extends {@link MetaObject} with the version this extension adds to each entry of a read's
+ * `contents` (R47). All key naming rules from `MetaObject` apply.
+ */
+export interface ResourceContentsMetaObject extends MetaObject {
+  /** The resource's version, as a delivery names it: for an `https` resource, its `ETag` (R4). */
+  'io.modelcontextprotocol/resource-webhooks.version'?: string;
+}
 
 /**
  * How a delivery or a result carries a change: `notify` names the version only, `full` adds the

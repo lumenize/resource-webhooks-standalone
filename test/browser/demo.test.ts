@@ -163,7 +163,7 @@ describe('the demo page', () => {
     await beat();
 
     // Beat 2, MCP core as it is: a writes, and b reads. A names the version in the read's _meta,
-    // as it does on every read since phase 10, though the rehearsed narration says nothing does.
+    // as on every read it serves, though demo-script.md's narration for beat 2 says nothing does.
     const v42 = await write(note42, 'Buy milk');
     await click('b-read');
     await says('b', `resources/read ${uri42} → `, 'Buy milk', `"${RESOURCE_VERSION_META_KEY}":"${v42}"`);
