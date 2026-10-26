@@ -2,7 +2,7 @@
 // client, as phase 5 asks. It speaks only HTTP and WebSocket, through the parties' module.
 import { expect, vi } from 'vitest';
 import { SERVER_INFO } from '../../src/server-role/server-role';
-import { listen, NETWORK_WAIT, signedIn, subscribe, watch, write, type Tier } from '../client/parties';
+import { listen, NETWORK_WAIT, signedIn, subscribe, versioned, watch, write, type Tier } from '../client/parties';
 
 /**
  * Scenario 2: A lists `mcp.resource.updated`, `b` subscribes after SEP-3415's handshake with B, a
@@ -64,7 +64,7 @@ export async function scenario2(tier: Tier): Promise<void> {
   ]);
   // b then reads the note, as in Scenario 1a.
   const read = await b.client.request<{ resultType: string; contents: { uri: string; text: string }[] }>('resources/read', { uri });
-  expect(read.contents).toEqual([{ uri, mimeType: 'application/json', text: '{"title":"Buy milk","done":false}' }]);
+  expect(read.contents).toEqual([{ uri, mimeType: 'application/json', text: '{"title":"Buy milk","done":false}', ...versioned(version) }]);
 
   // The Wipes passed over the same channels, and nothing secret came back on either. Each check
   // reports a boolean, so a failure prints no secret it found.

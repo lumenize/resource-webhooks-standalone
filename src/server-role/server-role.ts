@@ -24,6 +24,7 @@ import { INVALID_PARAMS, LATEST_PROTOCOL_VERSION, METHOD_NOT_FOUND } from '../ve
 import type { EventsSubscribeRequestParams, EventsUnsubscribeRequestParams } from '../events-types';
 import { EVENTS_EXTENSION } from '../events-types';
 import {
+  RESOURCE_VERSION_META_KEY,
   RESOURCE_WEBHOOKS_EXTENSION,
   type ResourceWebhookSubscribeRequestParams,
   type ResourceWebhookUnsubscribeRequestParams,
@@ -33,7 +34,7 @@ import { clampSchedule, Deliveries, type DeliveryReport, type Send } from './del
 import { Events } from './events';
 import { ResourceWebhooks } from './resource-webhooks';
 import { Subscriptions, type Subscription } from './subscriptions';
-import { parseTarget, TYPES, type Target } from './targets';
+import { listPath, parseTarget, TYPES, type Target } from './targets';
 import { requestErrors, toolErrors, toolSchemaFor } from './validation';
 import { VersionStore } from './version-store';
 
@@ -155,7 +156,7 @@ export class ServerRole {
       store: this.store,
       deliveries: this.#deliveries,
       subscriptions: this.#subscriptions,
-      contentsOf: (path, text) => this.#entry(path, text),
+      contentsOf: (uri, text, version) => this.#entry(uri, text, version),
       listed: (path) => LISTED_FOLDERS.some((folder) => path.startsWith(`${folder}/`)),
       pageSize: options.pageSize,
     });
@@ -281,17 +282,19 @@ export class ServerRole {
     return { resultType: 'complete', contents, ...UNCACHED };
   }
 
-  // A resource answers one entry, a folder one per live member, and anything else nothing.
+  // A resource answers one entry, a folder one per live member, and anything else nothing. A list
+  // named in A's own scheme answers under that URI.
   #contents(uri: string): Contents[] | undefined {
     const target = this.#target(uri);
-    if (target?.resource) {
-      const current = this.store.current(target.path);
-      return current && !current.deleted ? [this.#entry(target.path, current.contents)] : undefined;
+    const path = target?.resource ? target.path : listPath(uri);
+    if (path) {
+      const current = this.store.current(path);
+      return current && !current.deleted ? [this.#entry(uri, current.contents, current.version)] : undefined;
     }
     if (target) {
-      return this.store.members(target.path).map((path) => {
-        const current = this.store.current(path) as { contents: string };
-        return this.#entry(path, current.contents);
+      return this.store.members(target.path).map((member) => {
+        const current = this.store.current(member) as { contents: string; version: string };
+        return this.#entry(`${this.#root}${member}`, current.contents, current.version);
       });
     }
     const resource = this.#extras.resources?.find((extra) => extra.resource.uri === uri);
@@ -303,8 +306,9 @@ export class ServerRole {
     return undefined;
   }
 
-  #entry(path: string, text: string): TextResourceContents {
-    return { uri: `${this.#root}${path}`, mimeType: 'application/json', text };
+  // Every entry A serves names its version, under the extension's provisional key (R47).
+  #entry(uri: string, text: string, version: string): TextResourceContents {
+    return { uri, mimeType: 'application/json', text, _meta: { [RESOURCE_VERSION_META_KEY]: version } };
   }
 
   #resource(path: string): Resource {

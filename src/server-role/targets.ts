@@ -30,3 +30,27 @@ export function parseTarget(path: string): Target | undefined {
   if (names.slice(0, -1).some(Boolean)) return undefined;
   return { type: type as TypeName, path, resource: names.at(-1) ?? false };
 }
+
+/** A's own scheme for its lists, as `lists:///inbox/groceries`, readable only through `resources/read`. */
+export const LISTS_SCHEME = 'lists:///';
+
+/**
+ * The path a `lists:` URI names, keeping A's rule that a list's last segment starts `list-`, so
+ * `lists:///inbox/groceries` names `/lists/inbox/list-groceries`. The scheme names lists only, so
+ * every URI under it names one, and `lists:///inbox` the list `inbox`. Undefined for any other URI,
+ * or one with an empty or unusable segment.
+ */
+export function listPath(uri: string): string | undefined {
+  if (!uri.startsWith(LISTS_SCHEME)) return undefined;
+  const segments = uri.slice(LISTS_SCHEME.length).split('/');
+  const name = segments.pop();
+  if (!name) return undefined;
+  const path = `/lists/${[...segments, `list-${name}`].join('/')}`;
+  return parseTarget(path)?.resource ? path : undefined;
+}
+
+/** The `lists:` URI of a list's path, as `lists:///inbox/groceries`, or undefined for any other path. */
+export function listUri(path: string): string | undefined {
+  const match = /^\/lists\/(?:(.+)\/)?list-([^/]+)$/.exec(path);
+  return match ? `${LISTS_SCHEME}${match[1] ? `${match[1]}/` : ''}${match[2]}` : undefined;
+}

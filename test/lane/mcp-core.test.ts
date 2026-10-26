@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { headerValue, McpError } from '../../src/client/mcp-client';
 import { SERVER_INFO } from '../../src/server-role/server-role';
 import { specErrors } from '../../src/server-role/validation';
+import { versioned } from '../client/parties';
 import { newLane, type Lane } from './lane';
 
 const META = { 'io.modelcontextprotocol/serverInfo': SERVER_INFO };
@@ -42,7 +43,7 @@ function rows(lane: Lane) {
 }
 
 describe('Scenario 1a: MCP core as it is', () => {
-  it('writes a note with write_note and reads it with resources/read, which names no version', async () => {
+  it('writes a note with write_note and reads it with resources/read, whose entry names its version in _meta', async () => {
     const lane = newLane();
     const uri = `${lane.root}/notes/inbox/note-42`;
 
@@ -59,7 +60,7 @@ describe('Scenario 1a: MCP core as it is', () => {
     const read = await lane.client.request('resources/read', { uri });
     expect(read).toEqual({
       resultType: 'complete',
-      contents: [{ uri, mimeType: 'application/json', text: '{"title":"Buy milk"}' }],
+      contents: [{ uri, mimeType: 'application/json', text: '{"title":"Buy milk"}', ...versioned(version) }],
       ttlMs: 0,
       cacheScope: 'public',
       _meta: META,

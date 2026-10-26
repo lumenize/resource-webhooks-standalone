@@ -9,7 +9,7 @@ import type { ResourceChange } from '../../src/resource-webhooks-types';
 import { FULL_BODY_LIMIT } from '../../src/server-role/resource-webhooks';
 import { subscriptionId } from '../../src/server-role/subscriptions';
 import { newSecret } from '../../src/standard-webhooks';
-import { listen, signedIn, subscribeResource, untilClosed, watch, write, type Party } from '../client/parties';
+import { listen, signedIn, subscribeResource, untilClosed, versioned, watch, write, type Party } from '../client/parties';
 import { level2 } from '../scenarios/level2';
 import { newLane, type Lane } from './lane';
 import { echo, receiver, type Received } from './receiver';
@@ -216,7 +216,7 @@ describe("A's subscribe", () => {
     await listener.register(rotated);
     await subscribeResource(b, uri, listener.hookUrl, rotated, { form: 'full' });
     const v3 = await write(a, uri, 'Full');
-    await vi.waitFor(() => expect(listener.deliveries().at(-1)?.body).toEqual({ uri, form: 'full', version: v3, contents: [{ uri, mimeType: 'application/json', text: '{"title":"Full","done":false}' }] }));
+    await vi.waitFor(() => expect(listener.deliveries().at(-1)?.body).toEqual({ uri, form: 'full', version: v3, contents: [{ uri, mimeType: 'application/json', text: '{"title":"Full","done":false}', ...versioned(v3) }] }));
   });
 });
 

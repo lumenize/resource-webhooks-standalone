@@ -270,7 +270,9 @@ function patched(held: Copy | undefined, fromVersion: string | undefined, versio
   } catch {
     return undefined;
   }
-  return { version, deleted: false, contents: [{ ...entry, text: JSON.stringify(applyMergePatch(value, mergePatch as JsonValue)) }] };
+  // The entry's `_meta` named the version patched from, so the patched entry carries none.
+  const { _meta: _old, ...rest } = entry;
+  return { version, deleted: false, contents: [{ ...rest, text: JSON.stringify(applyMergePatch(value, mergePatch as JsonValue)) }] };
 }
 
 function keyOf(target: Target): string {

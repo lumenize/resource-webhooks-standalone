@@ -19,7 +19,7 @@ import { diff, type JsonValue } from '../vendor/lumenize-merge-patch/merge-patch
 import { INVALID_PARAMS, type JSONValue, type Result } from '../vendor/mcp-spec/2026-07-28/schema';
 import { randomId, type Deliveries, type Message } from './deliveries';
 import { coveringTargets, type Subscription, type SubscriptionKey, type Subscriptions } from './subscriptions';
-import { parseTarget } from './targets';
+import { listPath, listUri, parseTarget } from './targets';
 import { templateMatcher } from './uri-templates';
 import type { Row, VersionStore } from './version-store';
 
@@ -38,8 +38,8 @@ export interface ResourceWebhooksOptions {
   store: VersionStore;
   deliveries: Deliveries;
   subscriptions: Subscriptions;
-  /** A resource's contents entry, as `resources/read` gives it, from its path and stored text. */
-  contentsOf(path: string, text: string): ResourceContents;
+  /** A resource's contents entry, as `resources/read` gives it, under the URI a client named it by. */
+  contentsOf(uri: string, text: string, version: string): ResourceContents;
   /** Whether `resources/list` lists the resource at a path, which a `listed` target covers (R20). */
   listed(path: string): boolean;
   /** How many changes one result carries at most, after which it sets `hasMore` (R35). */
@@ -80,10 +80,10 @@ export class ResourceWebhooks {
     const result: ResourceWebhookSubscribeResult = { resultType: 'complete', id, refreshBefore, version: state.version };
     if (state.deleted) return { ...result, deleted: true };
     if (catchUp === 'notify' || params.version === state.version) return result;
-    const after = contentsOf(coverage.path, state.contents);
+    const after = contentsOf(key.target, state.contents, state.version);
     // A patch from the version the client names, when A still keeps it; the contents otherwise.
     const from = catchUp === 'patch' && params.version !== undefined ? store.at(coverage.path, params.version) : undefined;
-    const patch = from && !from.deleted ? patchBetween(contentsOf(coverage.path, from.contents), after) : undefined;
+    const patch = from && !from.deleted ? patchBetween(contentsOf(key.target, from.contents, from.version), after) : undefined;
     return patch !== undefined ? { ...result, fromVersion: params.version, mergePatch: patch } : { ...result, contents: [after] };
   }
 
@@ -101,12 +101,21 @@ export class ResourceWebhooks {
    * own form. A deletion goes in the `notify` form whatever the subscription's (R11).
    */
   notify(path: string, version: string, deleted: boolean): void {
-    const { root, store, deliveries } = this.#options;
+    const { root, store, subscriptions } = this.#options;
     const uri = `${root}${path}`;
     // The receiver is taken to hold the previous version, unless a delivery it never got waits.
     const previous = store.before(path, version)?.version ?? null;
+    this.#deliver(path, uri, version, deleted, previous, this.#covering(path, uri));
+    // A list is delivered under A's own scheme too, to subscriptions that named it so.
+    const alias = listUri(path);
+    if (alias) this.#deliver(path, alias, version, deleted, previous, subscriptions.covering('uri', [alias]));
+  }
+
+  // One write, delivered under one URI to each subscription that names it by that URI.
+  #deliver(path: string, uri: string, version: string, deleted: boolean, previous: string | null, rows: Subscription[]): void {
+    const { deliveries } = this.#options;
     const bodies = new Map<string, string>();
-    for (const row of this.#covering(path, uri)) {
+    for (const row of rows) {
       // A new message for each version, with its own webhook-id, kept across that version's retries (R14).
       const webhookId = `msg_${randomId(24)}`;
       const slot = `${row.id}\n${uri}`;
@@ -129,7 +138,7 @@ export class ResourceWebhooks {
     const notify: ResourceChange = deleted ? { uri, form: 'notify', version, deleted: true } : { uri, form: 'notify', version };
     if (key === 'full') {
       const current = this.#options.store.at(path, version) as { contents: string };
-      body = JSON.stringify({ uri, form: 'full', version, contents: [this.#options.contentsOf(path, current.contents)] } satisfies ResourceChange);
+      body = JSON.stringify({ uri, form: 'full', version, contents: [this.#options.contentsOf(uri, current.contents, version)] } satisfies ResourceChange);
       if (new TextEncoder().encode(body).length > FULL_BODY_LIMIT) body = JSON.stringify(notify);
     } else {
       body = JSON.stringify(notify);
@@ -144,7 +153,7 @@ export class ResourceWebhooks {
     const { store, contentsOf } = this.#options;
     const from = heldBefore === null ? undefined : store.at(path, heldBefore);
     const current = store.at(path, version);
-    const patch = from && !from.deleted && current && !current.deleted ? patchBetween(contentsOf(path, from.contents), contentsOf(path, current.contents)) : undefined;
+    const patch = from && !from.deleted && current && !current.deleted ? patchBetween(contentsOf(uri, from.contents, from.version), contentsOf(uri, current.contents, version)) : undefined;
     if (patch === undefined) return this.#body(bodies, path, uri, version, false, 'full');
     const body = JSON.stringify({ uri, form: 'patch', version, fromVersion: heldBefore!, mergePatch: patch } satisfies ResourceChange);
     return new TextEncoder().encode(body).length > FULL_BODY_LIMIT ? this.#body(bodies, path, uri, version, false, 'notify') : body;
@@ -206,9 +215,9 @@ export class ResourceWebhooks {
     const uri = `${root}${row.path}`;
     if (row.deleted) return { uri, form: 'notify', version: row.version, deleted: true };
     if (form === 'notify') return { uri, form: 'notify', version: row.version };
-    const after = contentsOf(row.path, row.contents);
+    const after = contentsOf(uri, row.contents, row.version);
     const from = form === 'patch' && cursorStamp !== undefined ? store.asOf(row.path, cursorStamp) : undefined;
-    const patch = from && !from.deleted ? patchBetween(contentsOf(row.path, from.contents), after) : undefined;
+    const patch = from && !from.deleted ? patchBetween(contentsOf(uri, from.contents, from.version), after) : undefined;
     if (patch !== undefined) return { uri, form: 'patch', version: row.version, fromVersion: from!.version, mergePatch: patch };
     return { uri, form: 'full', version: row.version, contents: [after] };
   }
@@ -229,10 +238,13 @@ export class ResourceWebhooks {
     }
     const { root } = this.#options;
     const uri = params.uri!;
+    const key = { targetKind: 'uri', target: uri, principal, url };
+    // A list named in A's own scheme is one resource, under the path the scheme maps it to.
+    const aliased = listPath(uri);
+    if (aliased) return { key, coverage: { kind: 'resource', path: aliased } };
     const target = uri.startsWith(`${root}/`) ? parseTarget(uri.slice(root.length)) : undefined;
     // As resources/read refuses a URI A could never serve (R7).
     if (!target) throw new JsonRpcError(INVALID_PARAMS, 'Resource not found', { uri });
-    const key = { targetKind: 'uri', target: uri, principal, url };
     // A folder or a type's root is a collection, whatever its number of members (R38).
     if (!target.resource) return { key, coverage: { kind: 'collection', covers: (path) => path.startsWith(`${target.path}/`) } };
     return { key, coverage: { kind: 'resource', path: target.path } };

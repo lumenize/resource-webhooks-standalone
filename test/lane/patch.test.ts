@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Copies, type Copy } from '../../src/client/copies';
 import type { ResourceChange, ResourceWebhookSubscribeResult } from '../../src/resource-webhooks-types';
 import { newSecret } from '../../src/standard-webhooks';
-import { signedIn, subscribeTarget, watch, write, type Party } from '../client/parties';
+import { signedIn, subscribeTarget, versioned, watch, write, type Party } from '../client/parties';
 import { newLane, type Lane } from './lane';
 import { receiver, type Received } from './receiver';
 
@@ -86,7 +86,7 @@ describe('a patch delivery', () => {
     expect(four).toMatchObject({ form: 'patch', fromVersion: v3 });
     // b holds v2, so it cannot apply the patch, and refreshes, naming v2.
     copies.deliver(four);
-    await vi.waitFor(() => expect(copies.get(uri)).toEqual({ version: v4, deleted: false, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Four', true)) }] }));
+    await vi.waitFor(() => expect(copies.get(uri)).toEqual({ version: v4, deleted: false, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Four', true)), ...versioned(v4) }] }));
   });
 
   it('starts from the version a delivery just got through with, when it waited while that one was out', async () => {
@@ -146,7 +146,7 @@ describe('a patch delivery', () => {
     const v2 = await write(a, uri, 'Newer');
     answer(200);
     // The receiver never got the creation, so the edit cannot patch from it.
-    await vi.waitFor(() => expect(endpoint.deliveries().map(body).find(({ version }) => version === v2)).toEqual({ uri, form: 'full', version: v2, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Newer')) }] }), { timeout: 5000 });
+    await vi.waitFor(() => expect(endpoint.deliveries().map(body).find(({ version }) => version === v2)).toEqual({ uri, form: 'full', version: v2, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Newer')), ...versioned(v2) }] }), { timeout: 5000 });
   });
 
   it('patches an edit to a resource left alone past the cut-off window, from the version it supersedes', async () => {
@@ -186,7 +186,7 @@ describe('a patch delivery', () => {
     const uri = `${lane.root}/notes/inbox/note-9`;
     const v1 = await write(a, uri, 'New');
     await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(1));
-    expect(body(endpoint.deliveries()[0])).toEqual({ uri, form: 'full', version: v1, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('New')) }] });
+    expect(body(endpoint.deliveries()[0])).toEqual({ uri, form: 'full', version: v1, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('New')), ...versioned(v1) }] });
   });
 });
 
@@ -207,7 +207,7 @@ describe('a patch catch-up', () => {
       await write(a, uri, 'Three');
       const v4 = await write(a, uri, 'Four');
       const whole = await subscribeTarget(b, { uri }, endpoint.url(), secret, { catchUp: 'patch', version: v1 });
-      expect({ version: whole.version, fromVersion: whole.fromVersion, contents: whole.contents }).toEqual({ version: v4, fromVersion: undefined, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Four')) }] });
+      expect({ version: whole.version, fromVersion: whole.fromVersion, contents: whole.contents }).toEqual({ version: v4, fromVersion: undefined, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Four')), ...versioned(v4) }] });
     } finally {
       vi.useRealTimers();
     }
@@ -233,7 +233,7 @@ describe('a patch catch-up', () => {
     const v3 = await write(a, uri, 'Three');
     await copies.refresh({ uri });
     expect(named).toEqual([undefined, v2, undefined]);
-    expect(copies.get(uri)).toEqual({ version: v3, deleted: false, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Three')) }] });
+    expect(copies.get(uri)).toEqual({ version: v3, deleted: false, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Three')), ...versioned(v3) }] });
   });
 
   it('is applied by b to the version it named', async () => {
@@ -248,6 +248,8 @@ describe('a patch catch-up', () => {
     await copies.refresh({ uri });
     expect(copies.get(uri)?.version).toBe(v2);
     expect(JSON.parse((copies.get(uri)!.contents![0] as { text: string }).text)).toEqual(note('Two', true));
+    // The patched entry drops the _meta that named the version it was patched from.
+    expect(copies.get(uri)!.contents![0]).not.toHaveProperty('_meta');
   });
 
   it("patches a collection's members from their versions at the cursor, and b reads one again when it holds another", async () => {

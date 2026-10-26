@@ -3,6 +3,7 @@
 // four boxes after each beat: what each party holds, A's and B's as they reported it, and the
 // messages each saw during the beat.
 import { chromium, type Browser, type Page } from 'playwright';
+import { RESOURCE_VERSION_META_KEY } from '../../src/resource-webhooks-types';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 type Party = 'a' | 'A' | 'B' | 'b';
@@ -161,11 +162,11 @@ describe('the demo page', () => {
     await says('b', `signed in as ${b1}`, 'socket open on B');
     await beat();
 
-    // Beat 2, MCP core as it is: a writes, and b reads, with nothing naming a version.
+    // Beat 2, MCP core as it is: a writes, and b reads. A names the version in the read's _meta,
+    // as it does on every read since phase 10, though the rehearsed narration says nothing does.
     const v42 = await write(note42, 'Buy milk');
     await click('b-read');
-    await says('b', `resources/read ${uri42} → `, 'Buy milk');
-    expect((await fresh('b')).join('\n')).not.toContain('version');
+    await says('b', `resources/read ${uri42} → `, 'Buy milk', `"${RESOURCE_VERSION_META_KEY}":"${v42}"`);
     await says('A', 'mcp tools/call', 'mcp resources/read');
     await holdsExactly('a', [`client ${a1}`, `wrote ${uri42} at ${v42}`]);
     await holdsExactly('A', [`note ${uri42} at ${v42}`, retryDelays]);

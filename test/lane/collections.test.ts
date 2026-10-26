@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { McpError } from '../../src/client/mcp-client';
 import type { ResourceChange } from '../../src/resource-webhooks-types';
 import { newSecret } from '../../src/standard-webhooks';
-import { signedIn, subscribeTarget, untilClosed, watch, write, type Party } from '../client/parties';
+import { signedIn, subscribeTarget, untilClosed, versioned, watch, write, type Party } from '../client/parties';
 import { scenarios9and10, subscribedToInbox } from '../scenarios/collections';
 import { newLane, type Lane } from './lane';
 import { receiver, type Received } from './receiver';
@@ -184,12 +184,12 @@ describe('a collection', () => {
     const version = await write(a, uri, 'One');
     const secret = newSecret();
     const result = await subscribeTarget(b, { uri: `${lane.root}/notes/inbox` }, endpoint.url(), secret, { catchUp: 'full' });
-    expect(result.changes).toEqual([{ uri, form: 'full', version, contents: [{ uri, mimeType: 'application/json', text: '{"title":"One","done":false}' }] }]);
+    expect(result.changes).toEqual([{ uri, form: 'full', version, contents: [{ uri, mimeType: 'application/json', text: '{"title":"One","done":false}', ...versioned(version) }] }]);
     // And by its cursor, the changes since.
     const two = `${lane.root}/notes/inbox/note-2`;
     const twoVersion = await write(a, two, 'Two');
     const since = await subscribeTarget(b, { uri: `${lane.root}/notes/inbox` }, endpoint.url(), secret, { catchUp: 'full', cursor: result.cursor });
-    expect(since.changes).toEqual([{ uri: two, form: 'full', version: twoVersion, contents: [{ uri: two, mimeType: 'application/json', text: '{"title":"Two","done":false}' }] }]);
+    expect(since.changes).toEqual([{ uri: two, form: 'full', version: twoVersion, contents: [{ uri: two, mimeType: 'application/json', text: '{"title":"Two","done":false}', ...versioned(twoVersion) }] }]);
   });
 
   it('matches {type} as one segment and {+path} as any depth, and refuses a template with another expression or an unmatched brace', async () => {

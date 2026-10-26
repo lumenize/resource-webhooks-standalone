@@ -5,7 +5,7 @@
 import { expect, vi } from 'vitest';
 import { createMcpClient, OAuthSession, type McpClient } from '../../src/client/mcp-client';
 import type { Target } from '../../src/client/copies';
-import type { ResourceWebhookSubscribeResult } from '../../src/resource-webhooks-types';
+import { RESOURCE_VERSION_META_KEY, type ResourceWebhookSubscribeResult } from '../../src/resource-webhooks-types';
 import { newSecret } from '../../src/standard-webhooks';
 
 /** What a scenario runs against: the lane's Worker, or a deployed one. */
@@ -89,6 +89,11 @@ export async function signedIn(tier: Tier, name: string): Promise<Party> {
   const client = createMcpClient({ endpoint: `${tier.root}/mcp`, clientInfo: { name, version: '0.0.0' }, oauth: session, fetch: send });
   await session.tokenFor(`${tier.root}/mcp`);
   return { client, session, clientId: session.clientIdFor(tier.origin)! };
+}
+
+/** The `_meta` A puts on each contents entry it serves, naming the entry's version (R47). */
+export function versioned(version: string): { _meta: Record<string, string> } {
+  return { _meta: { [RESOURCE_VERSION_META_KEY]: version } };
 }
 
 /** Writes a note through `write_note`, and returns the version it got. */

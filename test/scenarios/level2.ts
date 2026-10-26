@@ -5,7 +5,7 @@ import { expect, vi } from 'vitest';
 import { Copies } from '../../src/client/copies';
 import type { ResourceChange } from '../../src/resource-webhooks-types';
 import { SERVER_INFO } from '../../src/server-role/server-role';
-import { listen, NETWORK_WAIT, signedIn, socketUrl, subscribeResource, untilClosed, watch, write, type Listener, type Page, type Tier } from '../client/parties';
+import { listen, NETWORK_WAIT, signedIn, socketUrl, subscribeResource, untilClosed, versioned, watch, write, type Listener, type Page, type Tier } from '../client/parties';
 
 const META = { 'io.modelcontextprotocol/serverInfo': SERVER_INFO };
 
@@ -30,7 +30,7 @@ export async function level2(tier: Tier): Promise<void> {
   const a = await signedIn(tier, 'a');
   const b = await signedIn(tier, 'b');
   const uri = `${tier.root}/notes/inbox/note-${crypto.randomUUID().slice(0, 8)}`;
-  const note = (title: string, done: boolean) => [{ uri, mimeType: 'application/json', text: JSON.stringify({ title, done }) }];
+  const note = (title: string, done: boolean, version: string) => [{ uri, mimeType: 'application/json', text: JSON.stringify({ title, done }), ...versioned(version) }];
   const changes: ResourceChange[] = [];
   let listener: Listener | undefined;
   // b's own token for its socket, got once, so a reconnect is quick.
@@ -59,14 +59,14 @@ export async function level2(tier: Tier): Promise<void> {
     results.push(result);
     return result;
   });
-  expect(await refreshed(uri)).toEqual({ version: v1, deleted: false, contents: note('Buy milk', false) });
+  expect(await refreshed(uri)).toEqual({ version: v1, deleted: false, contents: note('Buy milk', false, v1) });
   const [subscribed] = results;
   expect(subscribed).toEqual({
     resultType: 'complete',
     id: expect.stringMatching(/^sub_[0-9a-f]{16}$/),
     refreshBefore: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
     version: v1,
-    contents: note('Buy milk', false),
+    contents: note('Buy milk', false, v1),
     _meta: META,
   });
 
@@ -74,12 +74,12 @@ export async function level2(tier: Tier): Promise<void> {
   const v2 = await write(a, uri, 'Buy milk', true);
   await vi.waitFor(() => expect(copies.get(uri)?.version).toBe(v2), NETWORK_WAIT);
   expect(first.deliveries().map(({ subscriptionId, webhookId, body }) => ({ subscriptionId, webhookId, body }))).toEqual([
-    { subscriptionId: subscribed.id, webhookId: expect.stringMatching(/^msg_[A-Za-z0-9]{24}$/), body: { uri, form: 'full', version: v2, contents: note('Buy milk', true) } },
+    { subscriptionId: subscribed.id, webhookId: expect.stringMatching(/^msg_[A-Za-z0-9]{24}$/), body: { uri, form: 'full', version: v2, contents: note('Buy milk', true, v2) } },
   ]);
 
   // Scenario 5: a refresh naming the version held answers it, with no contents and a new grant.
   const before = results.length;
-  expect(await refreshed(uri)).toEqual({ version: v2, deleted: false, contents: note('Buy milk', true) });
+  expect(await refreshed(uri)).toEqual({ version: v2, deleted: false, contents: note('Buy milk', true, v2) });
   expect(results[before]).toEqual({ resultType: 'complete', id: subscribed.id, refreshBefore: expect.any(String), version: v2, _meta: META });
   expect(Date.parse(results[before].refreshBefore as string)).toBeGreaterThanOrEqual(Date.parse(subscribed.refreshBefore as string));
 
@@ -94,7 +94,7 @@ export async function level2(tier: Tier): Promise<void> {
   const v4 = await write(a, uri, 'Buy oat milk', true);
   const second = await connect(secret);
   await vi.waitFor(() => expect(copies.get(uri)?.version).toBe(v4), { ...NETWORK_WAIT, timeout: NETWORK_WAIT.timeout + DEMO_SCHEDULE[0] });
-  expect(second.deliveries().map(({ body }) => body)).toEqual([{ uri, form: 'full', version: v4, contents: note('Buy oat milk', true) }]);
+  expect(second.deliveries().map(({ body }) => body)).toEqual([{ uri, form: 'full', version: v4, contents: note('Buy oat milk', true, v4) }]);
   expect(changes.map((change) => change.version)).not.toContain(v3);
   expect(await pageA.control('schedule', { delaysMs: null })).toMatchObject({ type: 'done' });
 
@@ -107,7 +107,7 @@ export async function level2(tier: Tier): Promise<void> {
   await vi.waitFor(() => expect(attemptsTo(pageA, hookUrl).slice(attempted)).toHaveLength(tier.retryScheduleMs.length + 1), { ...NETWORK_WAIT, timeout: NETWORK_WAIT.timeout + window });
   expect(copies.get(uri)?.version).toBe(v4);
   await connect(secret);
-  expect(await refreshed(uri)).toEqual({ version: v5, deleted: false, contents: note('Buy oat milk and bread', true) });
+  expect(await refreshed(uri)).toEqual({ version: v5, deleted: false, contents: note('Buy oat milk and bread', true, v5) });
 
   // Scenario 8: a deletion goes in the notify form, and the subscription carries on.
   const deleted = await a.client.request('tools/call', { name: 'delete_note', arguments: { uri } });
@@ -116,7 +116,7 @@ export async function level2(tier: Tier): Promise<void> {
   expect(changes.at(-1)).toEqual({ uri, form: 'notify', version: v6, deleted: true });
   expect(await refreshed(uri)).toEqual({ version: v6, deleted: true });
   const v7 = await write(a, uri, 'Buy milk again');
-  await vi.waitFor(() => expect(copies.get(uri)).toEqual({ version: v7, deleted: false, contents: note('Buy milk again', false) }), NETWORK_WAIT);
+  await vi.waitFor(() => expect(copies.get(uri)).toEqual({ version: v7, deleted: false, contents: note('Buy milk again', false, v7) }), NETWORK_WAIT);
   expect(new Set([v1, v2, v3, v4, v5, v6, v7]).size).toBe(7);
 
   listener?.close();

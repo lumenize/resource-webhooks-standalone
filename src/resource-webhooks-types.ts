@@ -15,6 +15,13 @@ import type {
 export const RESOURCE_WEBHOOKS_EXTENSION = 'io.modelcontextprotocol/resource-webhooks';
 
 /**
+ * The `_meta` key under which each entry of a read's `contents` carries the resource's version
+ * (R47). Provisional, in the extension's own namespace, until one is agreed with the Filesystems
+ * working group.
+ */
+export const RESOURCE_VERSION_META_KEY = 'io.modelcontextprotocol/resource-webhooks.version';
+
+/**
  * How a delivery or a result carries a change: `notify` names the version only, `full` adds the
  * contents, and `patch` a merge patch from a version the client holds.
  */

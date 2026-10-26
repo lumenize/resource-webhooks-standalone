@@ -237,7 +237,7 @@ Several values in SEP-3415 and this design look alike: opaque strings a client i
   "ttlMs": 0, "cacheScope": "public" }      // read again whenever it matters
 ```
 
-- **Nothing in the result names a version,** so `b` cannot tell whether a later read returns the same note or a new one without comparing contents. The phase on resources outside `https` adds one, under a `_meta` key, to every read A serves.
+- **Nothing in the core result names a version,** so `b` cannot tell whether a later read returns the same note or a new one without comparing contents. Since the phase on resources outside `https`, A names one in each entry's `_meta`, under the key R47 gives, on every read it serves, so the read above now carries `"_meta": { "io.modelcontextprotocol/resource-webhooks.version": "v1" }`.
 - **To hear about the next change, `b` would hold a `subscriptions/listen` stream open** with the note in its `resourceSubscriptions`. Holding a stream is what this work avoids, so the demo skips it.
 
 #### Scenario 1b: polling with plain HTTP
@@ -604,7 +604,7 @@ For a resource whose contents are JSON, a delivery can carry an RFC 7396 merge p
 - **In a collection's catch-up, a member whose patch starts from a version `b` does not hold** is read again by `b`, by `resources/read` or `GET`, rather than caught up again, since deliveries may have moved `b` past the cursor's version (Claude, 2026-10-25, while Larry was away).
 - **The code is copied, and tested by round trip.** `b` applies patches with a copy of `applyMergePatch` and its helper `setOwn`, from `@lumenize/structured-clone`, which patch keys such as `__proto__` as plain data, and A computes them with a plain-JSON `diff` that returns one patch or none. A test checks that `diff` then `applyMergePatch` gives back the new value, on RFC 7396's Appendix A vectors and the predecessor's extra ones.
 
-#### Resources without an `https` URI, in a later phase
+#### Resources without an `https` URI
 
 Many MCP resources use `file://`, `git://` or a scheme of their own, and a client reads them with `resources/read`, which carries no version today, as Scenario 1a shows. In a phase after the `https` one, each entry of a read's `contents` carries its version in `_meta`, under a key to be agreed with the Filesystems working group, whose strawman gives each resource a `version` too, and with the Transports working group's Definition Tags in view:
 
@@ -615,7 +615,7 @@ Many MCP resources use `file://`, `git://` or a scheme of their own, and a clien
 
 A `notify` delivery then tells the client to read, and the read's version tells it whether it got the delivered version or a later one.
 
-A serves its lists a second way for this phase, under a scheme of its own, as `lists:///inbox/groceries`, readable only through `resources/read`, so no `GET` and no `ETag` reach them.
+A serves its lists a second way for this phase, under a scheme of its own, as `lists:///inbox/groceries`, readable only through `resources/read`, so no `GET` and no `ETag` reach them. The scheme names lists only and keeps A's rule that a list's last segment starts `list-`, so `lists:///inbox/groceries` is the list at `/lists/inbox/list-groceries`, and a write to it is delivered under whichever URI a subscription named.
 
 #### What the extension adds to the wire
 
@@ -1281,3 +1281,23 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 
 - **R42 to R46 are written,** and sep-notes.md's § *Pending* no longer waits for the `patch` form's rules.
 - **Phase 6's test that `patch` answers `Unsupported` is gone,** since A offers `patch` now.
+
+### Phase 10
+
+**For Larry.**
+
+- **Your rehearsed beat 2 says nothing in the read names a version, and the page now shows one.** The plan has A name the version in `_meta` on every read it serves, `https` included, so beat 2's `resources/read` shows it, and the browser test now checks for it. Either the narration changes, or A names the version only for a client that declared the extension, which would keep beat 2 as MCP core is and still serve the clients that need it. I left `demo-script.md` as it is.
+- **The provisional key is `io.modelcontextprotocol/resource-webhooks.version`.** MCP's rules give a `_meta` key's prefix dot-separated labels, which cannot hold the slash in the extension's identifier, so this is the nearest key in its namespace. R47 names it, and sep-notes.md's § *Pending* keeps it open.
+- **`lists:///inbox/groceries` is the list at `/lists/inbox/list-groceries`.** A's rule that a list's last segment starts `list-` makes `/lists/inbox/groceries` a folder, so the scheme adds the prefix, names lists only, and so `lists:///inbox` is a list called `inbox`. A lists no `lists:` URI in `resources/list` and serves no template for the scheme.
+
+**Retro.**
+
+- **Each read entry A serves carries its version,** in a folder's read, a delivery's `full` contents and a catch-up's alike. A patched copy in `Copies` drops its entry's `_meta`, which named the version it was patched from.
+- **A write to a list is delivered under each URI a subscription named it by,** `https` or `lists:`, each in its own queue slot, and a catch-up's contents name the URI the subscription named.
+- **Fifteen tests compared entries exactly,** and each now expects the version, through a helper, `versioned`, in the test client.
+- **7 mutations, all caught by the test aimed at them on the first run.**
+- **The full suite passes, 388 tests, 4 more than phase 9 left,** both type-checks pass, both conformance gates still exit 0 at their baselines, and the deployed tier passes its six files on a fresh deploy.
+
+**Close-out.**
+
+- **R47 is written,** sep-notes.md's Findings answers where a resource with no `ETag` gets its version, and Scenario 1a's bullet shows the `_meta` version.
