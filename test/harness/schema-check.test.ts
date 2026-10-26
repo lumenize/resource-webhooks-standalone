@@ -15,8 +15,8 @@ afterEach(() => {
 // Runs `generate-schemas.mjs --check` on a copy of src/ whose types may have been edited.
 function check(edit: (types: string) => string): { exitCode: number; output: string } {
   scratch = mkdtempSync(join(tmpdir(), 'schema-check-'));
-  const files = ['resource-types', 'tool-types', 'events-types'].flatMap((name) => [`${name}.ts`, `${name}.schema.json`]);
-  // events-types.ts takes its base types from the spec's own schema.ts.
+  const files = ['resource-types', 'tool-types', 'events-types', 'resource-webhooks-types'].flatMap((name) => [`${name}.ts`, `${name}.schema.json`]);
+  // events-types.ts and resource-webhooks-types.ts take their base types from the spec's schema.ts.
   for (const file of [...files, 'vendor/mcp-spec/2026-07-28/schema.ts']) {
     cpSync(join(import.meta.dirname, '../../src', file), join(scratch, 'src', file));
   }

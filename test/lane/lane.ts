@@ -76,6 +76,7 @@ export function newLane(): Lane {
     gateway,
     root,
     heartbeatMs: Number(env.HEARTBEAT_MS),
+    retryScheduleMs: env.RETRY_SCHEDULE_MS.split(',').map(Number),
     operatorToken: env.OPERATOR_TOKEN,
     send: (request) => callWorker(request, laneEnv),
     async connect(url, protocols) {

@@ -1,9 +1,10 @@
 // Runtime validation, derived from TypeScript types only: the spec's schema.json, generated from
-// its schema.ts, and this repo's own schemas, generated from resource-types.ts, tool-types.ts
-// and events-types.ts.
+// its schema.ts, and this repo's own schemas, generated from resource-types.ts, tool-types.ts,
+// events-types.ts and resource-webhooks-types.ts.
 import { Validator, type OutputUnit } from '@cfworker/json-schema';
 import eventsSchema from '../events-types.schema.json';
 import resourceSchema from '../resource-types.schema.json';
+import resourceWebhooksSchema from '../resource-webhooks-types.schema.json';
 import toolSchema from '../tool-types.schema.json';
 import specSchema from '../vendor/mcp-spec/2026-07-28/schema.json';
 
@@ -64,6 +65,7 @@ function requestDefinitions(file: SchemaFile, fileName: string): [string, { file
 const REQUEST_DEFINITIONS = new Map([
   ...requestDefinitions(specSchema as SchemaFile, 'schema.json'),
   ...requestDefinitions(eventsSchema as SchemaFile, 'events-types.schema.json'),
+  ...requestDefinitions(resourceWebhooksSchema as SchemaFile, 'resource-webhooks-types.schema.json'),
 ]);
 
 /** Errors in a request against its method's definition, or undefined when no schema defines it. */

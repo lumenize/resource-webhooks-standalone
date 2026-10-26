@@ -55,6 +55,10 @@ export class VersionStore {
         id INTEGER PRIMARY KEY CHECK (id = 1),
         value INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS Horizon (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        stamp INTEGER NOT NULL
+      );
     `);
   }
 
@@ -75,6 +79,15 @@ export class VersionStore {
     if (!row) return undefined;
     const version = this.#version(row.stamp);
     return row.deleted ? { version, deleted: true } : { version, deleted: false, contents: row.contents! };
+  }
+
+  /**
+   * The path's newest row, or, for a path with none, never written or its deletion pruned, a
+   * deletion at the store's base version, as R37 asks. The base version moves past every pruned
+   * deletion, so no path is given one it had before.
+   */
+  state(path: string): Current {
+    return this.current(path) ?? { version: this.#baseVersion(), deleted: true };
   }
 
   /** Writes `contents` as the path's new version, if the preconditions pass. */
@@ -120,6 +133,7 @@ export class VersionStore {
   wipe(): number {
     const epoch = this.epoch() + 1;
     this.#sql.exec('DELETE FROM Versions');
+    this.#sql.exec('DELETE FROM Horizon');
     this.#sql.exec('INSERT OR REPLACE INTO Epoch (id, value) VALUES (1, ?)', epoch);
     return epoch;
   }
@@ -153,12 +167,28 @@ export class VersionStore {
   // and reads cost a thousandth as much.
   #prune(now: Date): void {
     const cutoff = new Date(now.getTime() - this.#cutoffWindowMs).toISOString();
-    this.#sql.exec(
-      `DELETE FROM Versions
-       WHERE writtenAt < ?
-         AND (deleted = 1 OR stamp < (SELECT MAX(stamp) FROM Versions AS v WHERE v.path = Versions.path))`,
-      cutoff,
-    );
+    const pruned = this.#sql
+      .exec<{ stamp: number; deleted: number }>(
+        `DELETE FROM Versions
+         WHERE writtenAt < ?
+           AND (deleted = 1 OR stamp < (SELECT MAX(stamp) FROM Versions AS v WHERE v.path = Versions.path))
+         RETURNING stamp, deleted`,
+        cutoff,
+      )
+      .toArray();
+    // A pruned deletion leaves its path with no row, so the base version moves past it. That is a
+    // write only when a prune drops a deletion.
+    const horizon = Math.max(0, ...pruned.filter((row) => row.deleted).map((row) => row.stamp));
+    if (horizon > this.#horizon()) this.#sql.exec('INSERT OR REPLACE INTO Horizon (id, stamp) VALUES (1, ?)', horizon);
+  }
+
+  #horizon(): number {
+    return this.#sql.exec<{ stamp: number }>('SELECT stamp FROM Horizon').toArray()[0]?.stamp ?? 0;
+  }
+
+  // A base version is never a row's version, which is only digits after the epoch.
+  #baseVersion(): string {
+    return `e${this.epoch()}.b${this.#horizon()}`;
   }
 
   #version(stamp: number): string {

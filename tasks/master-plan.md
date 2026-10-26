@@ -637,7 +637,7 @@ interface ResourceWebhooksSettings {    // under capabilities.extensions
   forms: ("notify" | "full" | "patch")[];
 }
 type ResourceWebhookSubscribeParams = RequestParams & SubscriptionTarget & {
-  form?: "notify" | "full";             // deliveries' form: notify if omitted
+  form?: "notify" | "full" | "patch";   // deliveries' form: notify if omitted
   catchUp?: "notify" | "full" | "patch"; // this result's form: notify if omitted
   version?: string;                     // one resource: the version held
   cursor?: string;                      // a collection: the last result's cursor
@@ -1131,3 +1131,32 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 
 - **Phase 4's hand-off of the one client is closed.** The preamble's bullet now says phase 5 builds it, and it is built.
 - **The egress memory and `sep-notes.md` § *Taken from SEP-3415 by reference* now carry the https run,** and the open questions both had, about A's own path, rebinding and error 1042, are answered as far as the runs go. The suggestion for the PR that a platform's egress can meet SEP-3415's delivery-time check is no longer held.
+
+### Phase 6
+
+**For Larry.**
+
+- **A's base version is `e{epoch}.b{N}`,** where N is the stamp of the newest deletion a prune has dropped. A URI nobody wrote, or whose deletion was pruned, answers it with `deleted: true`. It is never a version the URI had, since a row's version has only digits after the epoch, and it costs a write only when a prune drops a deletion. R37 leaves the form to the server.
+- **Until phase 7, a folder, a template or `listed` answers `Unsupported`,** with `data: {"feature": "target", "value": ...}`, since this phase subscribes one resource.
+- **The deployed tier runs A's retries at the demo's 2, 4 and 8 seconds,** set as a binding at deploy time, so its scenarios take seconds.
+
+**Retro.**
+
+- **Both levels share one table of subscriptions,** in `src/server-role/subscriptions.ts`, which checks the delivery, the cap, the grant, and the write after a handshake, so one principal's cap counts both levels. A table made before level 2 gets its `form` column when A starts.
+- **A ResourceChange goes through phase 4's queue with one slot per subscription and URI,** so a newer version replaces a pending one for that subscriber only.
+- **`b`'s copies live in `src/client/copies.ts`,** which ignores a delivery of the version it holds (R15) and refreshes again when a delivery crosses a refresh (R41). The page's `b` in phase 8 can use it as it is.
+- **The client calls an extension's methods only on a server that declared the extension,** learned once from `server/discover`, for resource webhooks by R2 and for Events by SEP-3415's own rule.
+- **`Mcp-Name` mirrors a target's `uri` or `uriTemplate`, whichever the request carries,** on both sides (R40).
+- **`form` names `patch` in the types,** so A answers it with `Unsupported` rather than the schema refusing it as `InvalidParams`, and the wire section says so too.
+- **Scenarios 3 to 8 are one narrative in `test/scenarios/level2.ts`,** on one note through v1 to v7, which the lane and the deployed tier both run.
+- **A WebSocket the lane closes itself fires no close event,** so a test waits for B to answer an unsigned POST to the hook with `503`, which a deployed run can do too.
+- **Evicting B took past the test's 15 seconds in `level2.test.ts` once earlier tests there had used B, and milliseconds alone.** Bisecting found no single earlier test or kind of use that caused it, so the two eviction tests run in a file of their own, `eviction.test.ts`, where B is fresh. The cause is not known.
+- **A test closes every socket it opened when it ends,** since one left open keeps pinging B.
+- **The test that `b` gets its version while `c`'s retries run first passed with the queue keyed by URI alone,** since which subscription A delivers to first decides what a shared slot drops. It now requires `c`'s retries and a second version for `b`, and fails that mutation in either order.
+- **A parameter property in the client broke Node's type stripping,** which `scripts/conformance-client.mjs` relies on, and only the client gate showed it. A harness test now loads each client module the way Node runs it.
+- **25 mutations, all caught,** each by the test aimed at it.
+- **The full suite passes, 292 tests, 28 more than phase 5 left,** both conformance gates still exit 0, and the deployed tier passes its four files on a fresh deploy, level 2's scenarios among them.
+
+**Close-out.**
+
+- **Phase 4's unit test of the queue's replacement now has its end-to-end tests here,** and stays as the closer check of the queue's own rules.

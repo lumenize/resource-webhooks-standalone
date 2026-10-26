@@ -16,6 +16,7 @@ export function deployedTier(): Tier {
     gateway: required('DEPLOYED_GATEWAY_INSTANCE'),
     root: `${origin}/server/${required('DEPLOYED_SERVER_INSTANCE')}`,
     heartbeatMs: Number(required('DEPLOYED_HEARTBEAT_MS')),
+    retryScheduleMs: required('DEPLOYED_RETRY_SCHEDULE_MS').split(',').map(Number),
     operatorToken: required('DEPLOYED_OPERATOR_TOKEN'),
     // Whatever the request asked, a redirect comes back to the caller, as the lane's does.
     send: (request) => fetch(new Request(request, { redirect: 'manual' })),

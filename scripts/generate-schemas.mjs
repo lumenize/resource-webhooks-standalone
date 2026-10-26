@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Generates JSON Schema for the types in src/resource-types.ts, src/tool-types.ts and
-// src/events-types.ts, the way the MCP spec generates schema.json from schema.ts: typescript-json-schema with the spec's flags, then the spec's
+// Generates JSON Schema for the types in src/resource-types.ts, src/tool-types.ts,
+// src/events-types.ts and src/resource-webhooks-types.ts, the way the MCP spec generates schema.json from schema.ts: typescript-json-schema with the spec's flags, then the spec's
 // rewrite to JSON Schema 2020-12. With --check it compares instead of writing, and exits 1 when
 // the committed schema is stale, as the spec's `generate-schemas.ts --check` does.
 // Adapted from that script at the spec's commit dae694f6, as ATTRIBUTIONS.md lists.
@@ -13,6 +13,7 @@ const PAIRS = [
   { source: 'src/resource-types.ts', target: 'src/resource-types.schema.json' },
   { source: 'src/tool-types.ts', target: 'src/tool-types.schema.json' },
   { source: 'src/events-types.ts', target: 'src/events-types.schema.json' },
+  { source: 'src/resource-webhooks-types.ts', target: 'src/resource-webhooks-types.schema.json' },
 ];
 const GENERATOR = fileURLToPath(new URL('../node_modules/typescript-json-schema/bin/typescript-json-schema', import.meta.url));
 

@@ -4,6 +4,7 @@
 // `a` and `b` is its own OAuth client of A, so each is its own principal.
 import { expect, vi } from 'vitest';
 import { createMcpClient, OAuthSession, type McpClient } from '../../src/client/mcp-client';
+import type { ResourceWebhookSubscribeResult } from '../../src/resource-webhooks-types';
 import { newSecret } from '../../src/standard-webhooks';
 
 /** What a scenario runs against: the lane's Worker, or a deployed one. */
@@ -18,6 +19,8 @@ export interface Tier {
   root: string;
   /** How often a client pings B, in milliseconds. */
   heartbeatMs: number;
+  /** The delays between A's delivery attempts, in milliseconds, as A runs them. */
+  retryScheduleMs: number[];
   /** What the page's controls carry, if this tier has one. */
   operatorToken?: string;
   /** Sends a request to the Worker, as fetch does, and returns a redirect rather than following it. */
@@ -64,6 +67,14 @@ export function socketOf(socket: WebSocket, protocol: () => string): Socket {
 /** How long a party waits for something that crosses the network, as an answer on a socket. */
 export const NETWORK_WAIT = { timeout: 10_000, interval: 20 };
 
+// Every socket a party opened and has not closed, so a test can close what it leaves open.
+const open = new Set<() => void>();
+
+/** Closes every socket the parties opened, as a test's end should. */
+export function closeEverySocket(): void {
+  for (const close of [...open]) close();
+}
+
 export interface Party {
   client: McpClient;
   session: OAuthSession;
@@ -80,8 +91,8 @@ export async function signedIn(tier: Tier, name: string): Promise<Party> {
 }
 
 /** Writes a note through `write_note`, and returns the version it got. */
-export async function write(party: Party, uri: string, title = 'Buy milk'): Promise<string> {
-  const result = await party.client.request('tools/call', { name: 'write_note', arguments: { uri, note: { title, done: false } } });
+export async function write(party: Party, uri: string, title = 'Buy milk', done = false): Promise<string> {
+  const result = await party.client.request('tools/call', { name: 'write_note', arguments: { uri, note: { title, done } } });
   return (result.structuredContent as { version: string }).version;
 }
 
@@ -95,12 +106,24 @@ export function hookUrl(tier: Tier, clientId: string): string {
   return `${tier.origin}/gateway/${tier.gateway}/hooks/${clientId}`;
 }
 
+/**
+ * Waits until B holds no socket for the client, as after it closed its own. An unsigned POST to
+ * the client's hook answers `503` then, and `401` while a socket is open.
+ */
+export async function untilClosed(tier: Tier, clientId: string): Promise<void> {
+  await vi.waitFor(async () => expect((await tier.send(new Request(hookUrl(tier, clientId), { method: 'POST', body: '{}' }))).status).toBe(503), NETWORK_WAIT);
+}
+
 export interface Listener {
   closes: { code: number; reason: string }[];
   secret: string;
   hookUrl: string;
   /** The events B passed down, with each one's parsed body. */
   deliveries(): { subscriptionId: string; webhookId: string; body: Record<string, unknown> }[];
+  /** Calls `listener` with each delivery's parsed body as it arrives. */
+  onDelivery(listener: (body: Record<string, unknown>) => void): void;
+  /** Registers another secret on the socket, and waits for B's acknowledgement. */
+  register(secret: string): Promise<void>;
   /** Stops the heartbeat, as a sleeping laptop does, and leaves the socket open. */
   stopPinging(): void;
   close(): void;
@@ -116,18 +139,36 @@ export async function listen(tier: Tier, party: Party, { secret = newSecret(), t
   expect(socket.protocol).toBe('rw.1');
   const messages: Record<string, unknown>[] = [];
   const closes: { code: number; reason: string }[] = [];
+  const watchers: ((body: Record<string, unknown>) => void)[] = [];
   socket.onMessage((data) => {
     // The runtime answers a ping with a bare pong, which is not JSON.
-    if (data !== 'pong') messages.push(JSON.parse(data));
+    if (data === 'pong') return;
+    const message = JSON.parse(data) as Record<string, unknown>;
+    messages.push(message);
+    if (message.type === 'delivery') for (const watcher of watchers) watcher(JSON.parse(message.body as string));
   });
   const heartbeat = setInterval(() => socket.send('ping'), tier.heartbeatMs);
+  const close = () => {
+    open.delete(close);
+    clearInterval(heartbeat);
+    socket.close(1000, 'Done');
+  };
+  open.add(close);
   socket.onClose((code, reason) => {
+    open.delete(close);
     clearInterval(heartbeat);
     closes.push({ code, reason });
   });
-  socket.send(JSON.stringify({ secret }));
-  // b subscribes only once B has stored its secret, since A's challenge reaches B first.
-  await vi.waitFor(() => expect(messages.find(({ type }) => type === 'secret-registered' || type === 'secret-refused')).toEqual({ type: 'secret-registered' }), NETWORK_WAIT);
+  const register = async (next: string) => {
+    const before = messages.length;
+    socket.send(JSON.stringify({ secret: next }));
+    // b subscribes only once B has stored its secret, since A's challenge reaches B first.
+    await vi.waitFor(
+      () => expect(messages.slice(before).find(({ type }) => type === 'secret-registered' || type === 'secret-refused')).toEqual({ type: 'secret-registered' }),
+      NETWORK_WAIT,
+    );
+  };
+  await register(secret);
   return {
     closes,
     secret,
@@ -140,12 +181,18 @@ export async function listen(tier: Tier, party: Party, { secret = newSecret(), t
           webhookId: message.webhookId as string,
           body: JSON.parse(message.body as string) as Record<string, unknown>,
         })),
-    stopPinging: () => clearInterval(heartbeat),
-    close: () => {
-      clearInterval(heartbeat);
-      socket.close(1000, 'Done');
+    onDelivery: (watcher) => {
+      watchers.push(watcher);
     },
+    register,
+    stopPinging: () => clearInterval(heartbeat),
+    close,
   };
+}
+
+/** `b`'s level 2 subscription to one resource, or its refresh. */
+export function subscribeResource(party: Party, uri: string, url: string, secret: string, extra: Record<string, unknown> = {}) {
+  return party.client.request<ResourceWebhookSubscribeResult>('resources/webhooks/subscribe', { uri, delivery: { url, secret }, ttlMs: 3_600_000, ...extra });
 }
 
 /** `b`'s subscription to one resource at level 1. */
@@ -176,6 +223,11 @@ export interface Page {
 export async function watch(tier: Tier, party: 'A' | 'B'): Promise<Page> {
   const path = party === 'A' ? `/server/${tier.name}/page` : `/gateway/${tier.gateway}/page`;
   const socket = await tier.connect(`${tier.origin}${path}`, []);
+  const close = () => {
+    open.delete(close);
+    socket.close(1000, 'Done');
+  };
+  open.add(close);
   const raw: string[] = [];
   socket.onMessage((data) => {
     raw.push(data);
@@ -196,6 +248,6 @@ export async function watch(tier: Tier, party: 'A' | 'B'): Promise<Page> {
       }, NETWORK_WAIT);
       return answer!;
     },
-    close: () => socket.close(1000, 'Done'),
+    close,
   };
 }

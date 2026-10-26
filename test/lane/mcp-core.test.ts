@@ -68,12 +68,16 @@ describe('Scenario 1a: MCP core as it is', () => {
 });
 
 describe('the core methods', () => {
-  it('discovers one protocol version, tools, resources and Events', async () => {
+  it('discovers one protocol version, tools, resources, Events and resource webhooks', async () => {
     const lane = newLane();
     expect(await lane.client.request('server/discover')).toEqual({
       resultType: 'complete',
       supportedVersions: ['2026-07-28'],
-      capabilities: { tools: {}, resources: {}, extensions: { 'io.modelcontextprotocol/events': {} } },
+      capabilities: {
+        tools: {},
+        resources: {},
+        extensions: { 'io.modelcontextprotocol/events': {}, 'io.modelcontextprotocol/resource-webhooks': { forms: ['notify', 'full'] } },
+      },
       ttlMs: 0,
       cacheScope: 'public',
       _meta: META,

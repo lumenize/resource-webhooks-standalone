@@ -23,9 +23,16 @@ import type {
 import { INVALID_PARAMS, LATEST_PROTOCOL_VERSION, METHOD_NOT_FOUND } from '../vendor/mcp-spec/2026-07-28/schema';
 import type { EventsSubscribeRequestParams, EventsUnsubscribeRequestParams } from '../events-types';
 import { EVENTS_EXTENSION } from '../events-types';
+import {
+  RESOURCE_WEBHOOKS_EXTENSION,
+  type ResourceWebhookSubscribeRequestParams,
+  type ResourceWebhookUnsubscribeRequestParams,
+} from '../resource-webhooks-types';
 import type { DeleteNoteArguments, NoteVersion, WriteNoteArguments } from '../tool-types';
 import { clampSchedule, Deliveries, type DeliveryReport, type Send } from './deliveries';
 import { Events } from './events';
+import { ResourceWebhooks } from './resource-webhooks';
+import { Subscriptions } from './subscriptions';
 import { parseTarget, TYPES, type Target } from './targets';
 import { requestErrors, toolErrors, toolSchemaFor } from './validation';
 import { VersionStore } from './version-store';
@@ -106,7 +113,9 @@ export class ServerRole {
   readonly #root: string;
   readonly #extras: ServerExtras;
   readonly #deliveries: Deliveries;
+  readonly #subscriptions: Subscriptions;
   readonly #events: Events;
+  readonly #webhooks: ResourceWebhooks;
   // A Map, so a method named after something on Object.prototype, as `constructor`, finds nothing.
   readonly #methods: ReadonlyMap<string, Method>;
 
@@ -122,15 +131,27 @@ export class ServerRole {
       verificationTtlMs: options.maxTtlMs,
       report: options.report,
     });
-    this.#events = new Events({
-      sql,
-      root,
-      deliveries: this.#deliveries,
+    this.#subscriptions = new Subscriptions(sql, {
       subscriptionIdKey: options.subscriptionIdKey,
       maxTtlMs: options.maxTtlMs,
       subscriptionCap: options.subscriptionCap,
     });
-    this.store = new VersionStore(sql, { cutoffWindowMs, onWrite: (path, version) => this.#events.notify(`${root}${path}`, version) });
+    this.#events = new Events({ root, deliveries: this.#deliveries, subscriptions: this.#subscriptions });
+    // Each write is told to both levels, in the same synchronous block as the store's insert.
+    this.store = new VersionStore(sql, {
+      cutoffWindowMs,
+      onWrite: (path, version, deleted) => {
+        this.#events.notify(`${root}${path}`, version);
+        this.#webhooks.notify(path, version, deleted);
+      },
+    });
+    this.#webhooks = new ResourceWebhooks({
+      root,
+      store: this.store,
+      deliveries: this.#deliveries,
+      subscriptions: this.#subscriptions,
+      contentsOf: (path, text) => this.#entry(path, text),
+    });
     this.#methods = new Map<string, Method>([
       ['server/discover', () => this.#discover()],
       ['tools/list', (params) => this.#listTools(params)],
@@ -143,6 +164,8 @@ export class ServerRole {
       ['events/unsubscribe', (params, principal) => this.#events.unsubscribe(params as unknown as EventsUnsubscribeRequestParams, principal)],
       ['events/poll', () => this.#events.refuseMode()],
       ['events/stream', () => this.#events.refuseMode()],
+      ['resources/webhooks/subscribe', (params, principal) => this.#webhooks.subscribe(params as unknown as ResourceWebhookSubscribeRequestParams, principal)],
+      ['resources/webhooks/unsubscribe', (params, principal) => this.#webhooks.unsubscribe(params as unknown as ResourceWebhookUnsubscribeRequestParams, principal)],
     ]);
   }
 
@@ -166,7 +189,7 @@ export class ServerRole {
    */
   wipe(): number {
     this.#deliveries.clear();
-    this.#events.clear();
+    this.#subscriptions.clear();
     return this.store.wipe();
   }
 
@@ -174,8 +197,9 @@ export class ServerRole {
     return {
       resultType: 'complete',
       supportedVersions: [LATEST_PROTOCOL_VERSION],
-      // An empty settings object: A sends no list-change notifications.
-      capabilities: { tools: {}, resources: {}, extensions: { [EVENTS_EXTENSION]: {} } },
+      // Events with an empty settings object, since A sends no list-change notifications, and
+      // resource webhooks with the forms A delivers.
+      capabilities: { tools: {}, resources: {}, extensions: { [EVENTS_EXTENSION]: {}, [RESOURCE_WEBHOOKS_EXTENSION]: { ...this.#webhooks.settings() } } },
       ...UNCACHED,
     };
   }

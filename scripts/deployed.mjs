@@ -27,6 +27,8 @@ const name = option('--name', strictPublic ? 'test-resource-webhooks-standalone'
 // the previous version for five minutes, where one asked every 30 s switched by 31 s.
 const POLL_MS = Number(option('--poll-ms', '30000'));
 const SECRETS = '.deployed.vars';
+// The demo's retry schedule, so a scenario's retries take seconds, set as a binding at deploy time.
+const RETRY_SCHEDULE_MS = '2000,4000,8000';
 
 function fail(message) {
   console.error(message);
@@ -143,7 +145,7 @@ if (deploying) {
   try {
     // The demo's bundle, never the conformance build's.
     run('node', ['scripts/check-demo-bundle.mjs', '--config', config]);
-    const deployed = captured('node_modules/.bin/wrangler', ['deploy', '-c', config, '--name', name, '--var', `ORIGIN:${origin}`, '--secrets-file', SECRETS]);
+    const deployed = captured('node_modules/.bin/wrangler', ['deploy', '-c', config, '--name', name, '--var', `ORIGIN:${origin}`, '--var', `RETRY_SCHEDULE_MS:${RETRY_SCHEDULE_MS}`, '--secrets-file', SECRETS]);
     version = /Current Version ID: ([0-9a-f-]+)/.exec(deployed)?.[1];
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });
@@ -162,5 +164,6 @@ run('node_modules/.bin/vitest', ['run', '--project', 'deployed', ...passthrough]
   DEPLOYED_SERVER_INSTANCE: vars.SERVER_INSTANCE,
   DEPLOYED_GATEWAY_INSTANCE: vars.GATEWAY_INSTANCE,
   DEPLOYED_HEARTBEAT_MS: vars.HEARTBEAT_MS,
+  DEPLOYED_RETRY_SCHEDULE_MS: RETRY_SCHEDULE_MS,
   DEPLOYED_OPERATOR_TOKEN: secrets.OPERATOR_TOKEN,
 });

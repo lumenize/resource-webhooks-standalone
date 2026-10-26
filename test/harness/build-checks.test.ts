@@ -57,7 +57,7 @@ const PLATFORM = [
 // What a role module may import, so it cannot reach the platform through another module.
 const ROLE_IMPORTS = [
   /^\.\/[\w-]+$/,
-  /^\.\.\/(json-rpc|tool-types|resource-types|events-types|standard-webhooks)$/,
+  /^\.\.\/(json-rpc|tool-types|resource-types|events-types|resource-webhooks-types|standard-webhooks)$/,
   /^\.\.\/[\w-]+\.schema\.json$/,
   /^\.\.\/vendor\/mcp-spec\//,
   /^@cfworker\/json-schema$/,
@@ -94,5 +94,14 @@ describe("A's and B's role modules", () => {
   it('is checked by patterns that do find the platform in the transport around it', () => {
     expect(platformUses('src/server.ts')).toEqual(expect.arrayContaining([String(/\bRequest\b/), String(/cloudflare:workers/)]));
     expect(platformUses('src/mcp-http.ts')).toEqual(expect.arrayContaining([String(/\bResponse\b/)]));
+  });
+});
+
+describe('the client modules', () => {
+  // scripts/conformance-client.mjs runs them in Node with their types stripped, which refuses
+  // what only TypeScript compiles, such as a parameter property.
+  it.each(['src/client/mcp-client.ts', 'src/client/copies.ts', 'src/standard-webhooks.ts'])('%s loads in Node with its types stripped', (file) => {
+    const loaded = execFileSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(join(process.cwd(), file))}); console.log('loaded')`], { encoding: 'utf8' });
+    expect(loaded.trim()).toBe('loaded');
   });
 });

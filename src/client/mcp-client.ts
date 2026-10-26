@@ -1,8 +1,9 @@
 // An MCP client of 2026-07-28 over Streamable HTTP, using only `fetch` and Web Crypto, so a
 // browser page, a script and the tests share it. Each request carries the `_meta` envelope and
-// the headers that mirror its body, and a `401` starts MCP's authorization flow. It is one
-// module with no relative imports but types, so Node can run it with its types stripped.
-import type { Implementation, JSONRPCErrorResponse, Result } from '../vendor/mcp-spec/2026-07-28/schema';
+// the headers that mirror its body, and a `401` starts MCP's authorization flow. It calls an
+// extension's methods only on a server that declared the extension. It is one module with no
+// relative imports but types, so Node can run it with its types stripped.
+import type { DiscoverResult, Implementation, JSONRPCErrorResponse, Result } from '../vendor/mcp-spec/2026-07-28/schema';
 
 export const PROTOCOL_VERSION = '2026-07-28';
 
@@ -47,20 +48,64 @@ export interface McpClient {
   request<R extends Result = Result>(method: string, params?: Record<string, unknown>): Promise<R>;
 }
 
-const NAME_SOURCES: ReadonlyMap<string, 'name' | 'uri'> = new Map([
-  ['tools/call', 'name'],
-  ['resources/read', 'uri'],
-  ['prompts/get', 'name'],
-  ['events/subscribe', 'name'],
-  ['events/unsubscribe', 'name'],
-  ['events/poll', 'name'],
-  ['events/stream', 'name'],
+// The params `Mcp-Name` mirrors, the first one present.
+const NAME_SOURCES: ReadonlyMap<string, readonly string[]> = new Map([
+  ['tools/call', ['name']],
+  ['resources/read', ['uri']],
+  ['prompts/get', ['name']],
+  ['events/subscribe', ['name']],
+  ['events/unsubscribe', ['name']],
+  ['events/poll', ['name']],
+  ['events/stream', ['name']],
+  ['resources/webhooks/subscribe', ['uri', 'uriTemplate']],
+  ['resources/webhooks/unsubscribe', ['uri', 'uriTemplate']],
 ]);
+
+const EVENTS = 'io.modelcontextprotocol/events';
+const RESOURCE_WEBHOOKS = 'io.modelcontextprotocol/resource-webhooks';
+
+// The extension each of these methods belongs to, which the server must have declared.
+const EXTENSION_OF: ReadonlyMap<string, string> = new Map([
+  ['events/list', EVENTS],
+  ['events/subscribe', EVENTS],
+  ['events/unsubscribe', EVENTS],
+  ['events/poll', EVENTS],
+  ['events/stream', EVENTS],
+  ['resources/webhooks/subscribe', RESOURCE_WEBHOOKS],
+  ['resources/webhooks/unsubscribe', RESOURCE_WEBHOOKS],
+]);
+
+/** A method the client would not call, since the server has not declared its extension. */
+export class ExtensionNotDeclaredError extends Error {
+  // Fields, not parameter properties, which Node's type stripping cannot run.
+  readonly extension: string;
+  readonly method: string;
+
+  constructor(extension: string, method: string) {
+    super(`The server has not declared ${extension}, so the client does not call ${method}`);
+    this.name = 'ExtensionNotDeclaredError';
+    this.extension = extension;
+    this.method = method;
+  }
+}
 
 export function createMcpClient({ endpoint, clientInfo, oauth, fetch: send = fetch }: McpClientOptions): McpClient {
   let nextId = 1;
-  return {
+  // The extensions the server declared, learned once from server/discover.
+  let extensions: Promise<Record<string, unknown>> | undefined;
+  const client: McpClient = {
     async request<R extends Result>(method: string, params: Record<string, unknown> = {}): Promise<R> {
+      const extension = EXTENSION_OF.get(method);
+      if (extension) {
+        extensions ??= client.request<DiscoverResult>('server/discover').then(
+          (result) => result.capabilities.extensions ?? {},
+          (error: unknown) => {
+            extensions = undefined;
+            throw error;
+          },
+        );
+        if (!(extension in (await extensions))) throw new ExtensionNotDeclaredError(extension, method);
+      }
       const id = nextId++;
       const meta = {
         'io.modelcontextprotocol/protocolVersion': PROTOCOL_VERSION,
@@ -73,8 +118,8 @@ export function createMcpClient({ endpoint, clientInfo, oauth, fetch: send = fet
         'MCP-Protocol-Version': PROTOCOL_VERSION,
         'Mcp-Method': method,
       };
-      const source = NAME_SOURCES.get(method);
-      if (source && typeof params[source] === 'string') headers['Mcp-Name'] = headerValue(params[source] as string);
+      const name = NAME_SOURCES.get(method)?.map((source) => params[source]).find((value) => typeof value === 'string');
+      if (name !== undefined) headers['Mcp-Name'] = headerValue(name as string);
       const body = JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, _meta: meta } });
       const post = (token: string | undefined) =>
         // A redirect would carry the token on to wherever it points, so none is followed, and a
@@ -97,9 +142,11 @@ export function createMcpClient({ endpoint, clientInfo, oauth, fetch: send = fet
       }
       if (message?.error && typeof message.error.code === 'number') throw new McpError(response.status, message.error);
       if (!response.ok || !message?.result) throw new HttpError(response.status, text);
+      if (method === 'server/discover') extensions = Promise.resolve((message.result as unknown as DiscoverResult).capabilities.extensions ?? {});
       return message.result;
     },
   };
+  return client;
 }
 
 // A value a plain header cannot carry, or one that looks like the sentinel, goes as Base64.

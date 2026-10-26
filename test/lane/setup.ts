@@ -2,8 +2,12 @@
 // to B will be, goes to the Worker's real handler, a request for a fake receiver's origin goes
 // to that receiver, and anything else fails the test, so nothing reaches the network.
 import { env } from 'cloudflare:workers';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
+import { closeEverySocket } from '../client/parties';
 import { callWorker, fakeReceivers, laneEnvFor } from './lane';
+
+// A socket a test leaves open keeps pinging B, and B never idles, which an eviction waits for.
+afterEach(() => closeEverySocket());
 
 export const fetchSpy = vi
   .spyOn(globalThis, 'fetch')

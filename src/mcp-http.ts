@@ -15,16 +15,22 @@ import {
   type RequestId,
 } from './vendor/mcp-spec/2026-07-28/schema';
 
-/** The methods whose requests mirror a body value in `Mcp-Name`, and where it comes from. */
-const MCP_NAME_SOURCES: ReadonlyMap<string, 'name' | 'uri'> = new Map([
-  ['tools/call', 'name'],
-  ['resources/read', 'uri'],
-  ['prompts/get', 'name'],
+/**
+ * The methods whose requests mirror a body value in `Mcp-Name`, and the params it may come from,
+ * the first one present.
+ */
+const MCP_NAME_SOURCES: ReadonlyMap<string, readonly string[]> = new Map([
+  ['tools/call', ['name']],
+  ['resources/read', ['uri']],
+  ['prompts/get', ['name']],
   // SEP-3415 names the event type in Mcp-Name, as tools/call names the tool.
-  ['events/subscribe', 'name'],
-  ['events/unsubscribe', 'name'],
-  ['events/poll', 'name'],
-  ['events/stream', 'name'],
+  ['events/subscribe', ['name']],
+  ['events/unsubscribe', ['name']],
+  ['events/poll', ['name']],
+  ['events/stream', ['name']],
+  // A target's uri or uriTemplate, as resources/read's uri, and none for a listed target (R40).
+  ['resources/webhooks/subscribe', ['uri', 'uriTemplate']],
+  ['resources/webhooks/unsubscribe', ['uri', 'uriTemplate']],
 ]);
 
 const BASE64_SENTINEL = /^=\?base64\?(.*)\?=$/;
@@ -97,10 +103,11 @@ function requireMatchingHeaders(headers: Headers, message: JSONRPCRequest): void
   const version = message.params!._meta['io.modelcontextprotocol/protocolVersion'];
   requireHeader(headers, 'MCP-Protocol-Version', version);
   requireHeader(headers, 'Mcp-Method', message.method);
-  const source = MCP_NAME_SOURCES.get(message.method);
-  // With no value in the body there is nothing to mirror, and the schema refuses the request.
-  if (source && (message.params?.[source] !== undefined || headers.has('Mcp-Name'))) {
-    requireHeader(headers, 'Mcp-Name', message.params?.[source], { base64: true });
+  const sources = MCP_NAME_SOURCES.get(message.method);
+  const value = sources?.map((name) => message.params?.[name]).find((each) => each !== undefined);
+  // With no value in the body there is nothing to mirror, and a header then mismatches.
+  if (sources && (value !== undefined || headers.has('Mcp-Name'))) {
+    requireHeader(headers, 'Mcp-Name', value, { base64: true });
   }
 }
 
