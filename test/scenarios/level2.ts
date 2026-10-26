@@ -37,9 +37,9 @@ export async function level2(tier: Tier): Promise<void> {
   const socketToken = await b.session.tokenForResource(tier.origin, socketUrl(tier, b.clientId));
   const connect = async (secret?: string) => {
     listener = await listen(tier, b, { token: socketToken, ...(secret ? { secret } : {}) });
-    listener.onDelivery((body) => {
+    listener.onDelivery((body, webhookId) => {
       changes.push(body as unknown as ResourceChange);
-      copies.deliver(body as unknown as ResourceChange);
+      copies.deliver(body as unknown as ResourceChange, webhookId);
     });
     return listener;
   };

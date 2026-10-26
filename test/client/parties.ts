@@ -120,8 +120,8 @@ export interface Listener {
   hookUrl: string;
   /** The events B passed down, with each one's parsed body. */
   deliveries(): { subscriptionId: string; webhookId: string; body: Record<string, unknown> }[];
-  /** Calls `listener` with each delivery's parsed body as it arrives. */
-  onDelivery(listener: (body: Record<string, unknown>) => void): void;
+  /** Calls `listener` with each delivery's parsed body and webhook-id as it arrives. */
+  onDelivery(listener: (body: Record<string, unknown>, webhookId: string) => void): void;
   /** Registers another secret on the socket, and waits for B's acknowledgement. */
   register(secret: string): Promise<void>;
   /** Stops the heartbeat, as a sleeping laptop does, and leaves the socket open. */
@@ -139,13 +139,13 @@ export async function listen(tier: Tier, party: Party, { secret = newSecret(), t
   expect(socket.protocol).toBe('rw.1');
   const messages: Record<string, unknown>[] = [];
   const closes: { code: number; reason: string }[] = [];
-  const watchers: ((body: Record<string, unknown>) => void)[] = [];
+  const watchers: ((body: Record<string, unknown>, webhookId: string) => void)[] = [];
   socket.onMessage((data) => {
     // The runtime answers a ping with a bare pong, which is not JSON.
     if (data === 'pong') return;
     const message = JSON.parse(data) as Record<string, unknown>;
     messages.push(message);
-    if (message.type === 'delivery') for (const watcher of watchers) watcher(JSON.parse(message.body as string));
+    if (message.type === 'delivery') for (const watcher of watchers) watcher(JSON.parse(message.body as string), message.webhookId as string);
   });
   const heartbeat = setInterval(() => socket.send('ping'), tier.heartbeatMs);
   const close = () => {

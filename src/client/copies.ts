@@ -1,8 +1,9 @@
 // What a level 2 subscriber holds of each resource it watches: the version, whether that version
-// deleted it, and the contents when a delivery or a result carried them. It ignores a delivery of
-// a version it holds (R15), and refreshes again when a delivery arrives while a refresh naming the
-// same resource is outstanding (R41), since the result and the delivery travel apart and either
-// may arrive first. Like mcp-client.ts it imports nothing but types.
+// deleted it, and the contents when a delivery or a result carried them. It drops a delivery whose
+// webhook-id it has seen, or whose resource none of its targets covers, ignores one naming the
+// version it holds (R15), and asks again when a delivery arrives while a refresh naming the same
+// resource is outstanding (R41), since the result and the delivery travel apart and either may
+// arrive first. Like mcp-client.ts it imports nothing but types.
 import type { ResourceChange, ResourceContents, ResourceWebhookSubscribeResult } from '../resource-webhooks-types';
 
 export interface Copy {
@@ -15,11 +16,17 @@ export interface Copy {
 /** Subscribes to `uri` or refreshes it, naming the version held, if any. */
 export type Refresh = (uri: string, version: string | undefined) => Promise<ResourceWebhookSubscribeResult>;
 
+// How many webhook-ids it remembers, enough to cover a delivery's retries.
+const SEEN = 1000;
+
 export class Copies {
   readonly #refresh: Refresh;
   readonly #copies = new Map<string, Copy>();
-  // Each resource's outstanding refresh, and whether a delivery crossed it.
-  readonly #refreshing = new Map<string, { crossed: boolean }>();
+  // The resources it has subscribed to, whose deliveries it takes.
+  readonly #targets = new Set<string>();
+  // Each resource's outstanding refreshes, and whether a delivery crossed each.
+  readonly #refreshing = new Map<string, Set<{ crossed: boolean }>>();
+  readonly #seen = new Set<string>();
 
   constructor(refresh: Refresh) {
     this.#refresh = refresh;
@@ -29,27 +36,47 @@ export class Copies {
     return this.#copies.get(uri);
   }
 
-  /** Takes a change a delivery carried, unless it names the version held. */
-  deliver(change: ResourceChange): void {
-    const outstanding = this.#refreshing.get(change.uri);
-    if (outstanding) outstanding.crossed = true;
+  /** Takes a change a delivery carried, unless it is a repeat, uncovered, or the version held. */
+  deliver(change: ResourceChange, webhookId?: string): void {
+    if (webhookId !== undefined) {
+      if (this.#seen.has(webhookId)) return;
+      this.#seen.add(webhookId);
+      if (this.#seen.size > SEEN) this.#seen.delete(this.#seen.values().next().value!);
+    }
+    if (!this.#covers(change.uri)) return;
+    for (const outstanding of this.#refreshing.get(change.uri) ?? []) outstanding.crossed = true;
     if (this.#copies.get(change.uri)?.version === change.version) return;
     const deleted = change.form === 'notify' && change.deleted === true;
     this.#copies.set(change.uri, { version: change.version, deleted, ...(change.form === 'full' ? { contents: change.contents } : {}) });
   }
 
-  /** Subscribes or refreshes, naming the version held, and again while a delivery crosses it. */
+  /**
+   * Subscribes or refreshes, naming the version held. A result that a delivery crossed may be
+   * older than what the delivery brought, so it is not taken, and the refresh is made again.
+   */
   async refresh(uri: string): Promise<Copy | undefined> {
+    this.#targets.add(uri);
     for (;;) {
       const outstanding = { crossed: false };
-      this.#refreshing.set(uri, outstanding);
+      const trackers = this.#refreshing.get(uri) ?? new Set();
+      this.#refreshing.set(uri, trackers.add(outstanding));
+      let result: ResourceWebhookSubscribeResult;
       try {
-        this.#take(uri, await this.#refresh(uri, this.#copies.get(uri)?.version));
+        result = await this.#refresh(uri, this.#copies.get(uri)?.version);
       } finally {
-        this.#refreshing.delete(uri);
+        trackers.delete(outstanding);
+        if (trackers.size === 0) this.#refreshing.delete(uri);
       }
-      if (!outstanding.crossed) return this.#copies.get(uri);
+      if (!outstanding.crossed) {
+        this.#take(uri, result);
+        return this.#copies.get(uri);
+      }
     }
+  }
+
+  #covers(uri: string): boolean {
+    for (const target of this.#targets) if (uri === target || uri.startsWith(`${target}/`)) return true;
+    return false;
   }
 
   #take(uri: string, result: ResourceWebhookSubscribeResult): void {

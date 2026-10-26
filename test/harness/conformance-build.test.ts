@@ -36,6 +36,11 @@ describe('with CONFORMANCE set', () => {
     expect(subscribe.status).toBe(401);
     const unsubscribe = await call(server, 'localhost:8788', 'events/unsubscribe', { ...subscription, delivery: { url: 'https://receiver.invalid/hook' } }, { 'Mcp-Name': subscription.name });
     expect(unsubscribe.status).toBe(401);
+    const uri = 'http://localhost:8788/server/A/notes/inbox/note-42';
+    for (const method of ['resources/webhooks/subscribe', 'resources/webhooks/unsubscribe']) {
+      const response = await call(server, 'localhost:8788', method, { uri, delivery: { url: 'https://receiver.invalid/hook', secret: `whsec_${btoa('x'.repeat(32))}` } }, { 'Mcp-Name': uri });
+      expect({ method, status: response.status }).toEqual({ method, status: 401 });
+    }
     expect((await call(server, 'localhost:8788', 'events/list')).status).toBe(200);
   });
 

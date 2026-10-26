@@ -599,6 +599,7 @@ describe("A's deliveries", () => {
     await sleep(scheduleMs);
     expect(listener.deliveries()).toHaveLength(1);
     expect(await refusal(b.client.request('events/unsubscribe', key))).toEqual({ code: -32023, data: { kind: 'subscription' } });
+    expect(await refusal(b.client.request('events/unsubscribe', { ...key, delivery: { url: listener.hookUrl.replace('https:', 'http:') } }))).toMatchObject({ code: -32602 });
     expect(await refusal(subscribe(b, uri, listener.hookUrl, listener.secret, { name: 'no.such.type' }))).toEqual({ code: -32023, data: { kind: 'event' } });
   });
 

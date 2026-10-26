@@ -495,7 +495,7 @@ Collections are where an implementation will teach the most, so the prototype ta
 - **A resource covered by a template need not be listed.** `resources/list` returns the resources available to the client, and nothing ties it to `resources/templates/list`. The spec's own example template, `file:///{path}`, would not list every file.
 
 - **A collection is a resource whose `resources/read` returns its members as entries with URIs of their own** (R38). The server decides which of its URIs those are, and a subscription's kind is set when it is made, never by how many members exist, so an empty inbox still answers with `changes` and a cursor. A client learns the kind from the first result: a collection's carries a `cursor`, and one resource's carries a `version`.
-- **A resource that has no version yet, or whose deletion A has forgotten,** answers as a deletion at a base version A mints at the start of each epoch, as `{"version": "e2.v0", "deleted": true}` (R37). When `a` later writes it, its `v1` is delivered like any change.
+- **A resource that has no version yet, or whose deletion A has forgotten,** answers as a deletion at a base version A mints, as `{"version": "e2.b0", "deleted": true}` (R37). The base version moves past each deletion A prunes, as `e2.b17` after one stamped 17, so no URI is given a version it had. When `a` later writes it, its `v1` is delivered like any change.
 
 So a subscription names one of three targets, and a `uriTemplate` or `listed` target is always a collection:
 
@@ -1150,12 +1150,22 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 - **`form` names `patch` in the types,** so A answers it with `Unsupported` rather than the schema refusing it as `InvalidParams`, and the wire section says so too.
 - **Scenarios 3 to 8 are one narrative in `test/scenarios/level2.ts`,** on one note through v1 to v7, which the lane and the deployed tier both run.
 - **A WebSocket the lane closes itself fires no close event,** so a test waits for B to answer an unsigned POST to the hook with `503`, which a deployed run can do too.
-- **Evicting B took past the test's 15 seconds in `level2.test.ts` once earlier tests there had used B, and milliseconds alone.** Bisecting found no single earlier test or kind of use that caused it, so the two eviction tests run in a file of their own, `eviction.test.ts`, where B is fresh. The cause is not known.
+- **Evicting B took past the test's 15 seconds in `level2.test.ts` once earlier tests there had used B, and milliseconds alone.** Bisecting found no single earlier test or kind of use that caused it, so the restart tests run in a file of their own, `eviction.test.ts`, where B is fresh. The cause is not known.
+- **`evictDurableObject` lets A's retries run to their end before it evicts,** measured: all four attempts happened inside one evict, which took a second. So it cannot show a restart dropping A's queue, and the first test that tried passed whatever the code did. `abortAllDurableObjects` drops the retries at once and keeps A's storage, so A's restart tests abort, and assert the retries were cut short. B's still evict, since its sockets must hibernate across it.
 - **A test closes every socket it opened when it ends,** since one left open keeps pinging B.
 - **The test that `b` gets its version while `c`'s retries run first passed with the queue keyed by URI alone,** since which subscription A delivers to first decides what a shared slot drops. It now requires `c`'s retries and a second version for `b`, and fails that mutation in either order.
 - **A parameter property in the client broke Node's type stripping,** which `scripts/conformance-client.mjs` relies on, and only the client gate showed it. A harness test now loads each client module the way Node runs it.
-- **25 mutations, all caught,** each by the test aimed at it.
-- **The full suite passes, 292 tests, 28 more than phase 5 left,** both conformance gates still exit 0, and the deployed tier passes its four files on a fresh deploy, level 2's scenarios among them.
+- **The verifier failed the first tree on three major issues and fourteen minor ones, all fixed or recorded:**
+  - The restart test of A could not fail, as the bullet above says.
+  - `Copies` lost R41 when two refreshes of one resource overlapped, since the first to finish deleted the other's tracker. Each refresh keeps its own now, a result a delivery crossed is never taken, and `Copies` drops a `webhook-id` it has seen and a change none of its targets covers, as § *The leg* says `b` does.
+  - The id was tested only below A. A test now checks that A's id is the keyed hash under the binding's key, and that it survives a lapse after a restart has swept the row.
+  - A lapsed subscription counted toward the cap and could be unsubscribed, and its queued delivery kept retrying past the grant. It counts for nothing now, unsubscribing it answers `NotFound`, and A makes no attempt past the grant.
+  - An unsubscribe that caught a POST in flight let a new subscription's next delivery for the URI overtake it. The slot now waits for that POST.
+  - The refactor had stopped unsubscribe refusing a malformed or non-`https` URL. Both levels refuse it again.
+  - The `form` column's migration, `Mcp-Name` on unsubscribe and on a `listed` target, `listed` alone, and the conformance build's closure of level 2 each have a test now. R7 names the `catchUp` refusal, and the Collections section's sketch of the base version matches the build.
+  - Accepted: the client keeps a server's extensions for its life, though A answers `server/discover` with `ttlMs: 0`. A grant for `ttlMs: 0` ends at once, as SEP-3415's "SHOULD be ≤ the suggested ttlMs" allows. Tests of an absence wait out the retry window, the one thing they can wait on, which `testing.md`'s rule against fixed delays does not foresee.
+- **37 mutations, 36 caught by the test aimed at them.** The one that survived, skipping lapsed subscriptions when a write finds them, showed that check redundant once the queue checks each message's grant, so it went.
+- **The full suite passes, 300 tests, 36 more than phase 5 left,** both conformance gates still exit 0, and the deployed tier passes its four files on a fresh deploy, level 2's scenarios among them.
 
 **Close-out.**
 

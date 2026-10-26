@@ -62,6 +62,8 @@ export interface Message {
   subscriptionId: string;
   webhookId: string;
   body: string;
+  /** When the subscription's grant ends, as an ISO string, after which no attempt is made. */
+  until?: string;
 }
 
 // SEP-3415 asks for 3 to 5 attempts over no more than 10 to 15 minutes. The window stops short of
@@ -91,6 +93,8 @@ interface Slot {
   subscriptionId: string;
   pending?: Message;
   cancelled: boolean;
+  /** A POST is out, which an unsubscribe lets finish before the slot takes another message. */
+  posting: boolean;
   /** Ends the wait between attempts early. */
   wake?: () => void;
 }
@@ -154,13 +158,18 @@ export class Deliveries {
     this.#start(slot, message);
   }
 
-  /** Stops every delivery for a subscription, as unsubscribing does. */
+  /**
+   * Stops every delivery for a subscription, as unsubscribing does. A POST already out keeps its
+   * slot until it is answered, so the next delivery for that URI, if the same key subscribes
+   * again, cannot overtake it.
+   */
   cancel(subscriptionId: string): void {
     for (const [slot, state] of this.#slots) {
       if (state.subscriptionId !== subscriptionId) continue;
       state.cancelled = true;
+      state.pending = undefined;
       state.wake?.();
-      this.#slots.delete(slot);
+      if (!state.posting) this.#slots.delete(slot);
     }
   }
 
@@ -179,7 +188,7 @@ export class Deliveries {
   // Each message runs under its own waitUntil, which holds the object up to 15 minutes from the
   // promise's start, so the schedule's window is measured from the message's first attempt.
   #start(slot: string, message: Message): void {
-    const state: Slot = { subscriptionId: message.subscriptionId, cancelled: false };
+    const state: Slot = { subscriptionId: message.subscriptionId, cancelled: false, posting: false };
     this.#slots.set(slot, state);
     this.#options.waitUntil(this.#deliver(slot, state, message));
   }
@@ -187,9 +196,13 @@ export class Deliveries {
   async #deliver(slot: string, state: Slot, message: Message): Promise<void> {
     const delays = this.#options.schedule();
     for (let attempt = 1; ; attempt++) {
+      // A subscription whose grant lapsed gets no more attempts.
+      if (message.until !== undefined && message.until < new Date().toISOString()) break;
       const headers = await deliveryHeaders(message.secret, message.webhookId, message.subscriptionId, message.body, nowSeconds());
-      if (state.cancelled) return;
+      if (state.cancelled) break;
+      state.posting = true;
       const result = await this.#options.send(message.url, headers, message.body, false);
+      state.posting = false;
       const outcome = 'failure' in result ? result.failure : String(result.status);
       this.#options.report?.({ kind: 'attempt', url: message.url, webhookId: message.webhookId, attempt, outcome });
       // 410 and 413 refuse this message for good, without ending the subscription.
@@ -198,7 +211,8 @@ export class Deliveries {
       await this.#wait(state, delays[attempt - 1]);
       if (state.cancelled || state.pending) break;
     }
-    if (state.cancelled) return;
+    // A Wipe has forgotten the slot, or an unsubscribe with no POST out has.
+    if (this.#slots.get(slot) !== state) return;
     const next = state.pending;
     this.#slots.delete(slot);
     if (next) this.#start(slot, next);

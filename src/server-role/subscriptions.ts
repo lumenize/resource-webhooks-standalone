@@ -58,7 +58,8 @@ export class Subscriptions {
     // A table made before level 2 has no form column.
     const columns = sql.exec<{ name: string }>('PRAGMA table_info(Subscriptions)').toArray();
     if (!columns.some((column) => column.name === 'form')) sql.exec('ALTER TABLE Subscriptions ADD COLUMN form TEXT');
-    // Expired subscriptions are swept when A wakes, and skipped lazily at delivery.
+    // Expired subscriptions are swept when A wakes, and skipped lazily: the queue makes no attempt
+    // past a message's grant, and the cap and an unsubscribe pass over them.
     sql.exec('DELETE FROM Subscriptions WHERE expiresAt < ?', new Date().toISOString());
   }
 
@@ -79,12 +80,13 @@ export class Subscriptions {
     if (secret !== undefined && !secretBytes(secret)) throw new JsonRpcError(INVALID_PARAMS, 'delivery.secret must be whsec_ and the base64 of 24 to 64 bytes');
   }
 
-  /** Throws `ResourceExhausted` when the principal holds the cap, not counting the key's own. */
+  /** Throws `ResourceExhausted` when the principal holds the cap, not counting the key's own or a lapsed one. */
   requireUnderCap(key: SubscriptionKey): void {
     const held = this.#sql
       .exec<{ count: number }>(
-        'SELECT COUNT(*) AS count FROM Subscriptions WHERE principal = ? AND NOT (targetKind = ? AND target = ? AND url = ?)',
+        'SELECT COUNT(*) AS count FROM Subscriptions WHERE principal = ? AND expiresAt >= ? AND NOT (targetKind = ? AND target = ? AND url = ?)',
         key.principal,
+        new Date().toISOString(),
         key.targetKind,
         key.target,
         key.url,
@@ -127,30 +129,31 @@ export class Subscriptions {
     );
   }
 
-  /** Removes a subscription, and answers its id, or undefined when the key matches none. */
+  /** Removes a subscription, and answers its id, or undefined when the key matches none or one that lapsed. */
   remove(key: SubscriptionKey): string | undefined {
-    const removed = this.#sql
-      .exec<{ id: string }>(
-        'DELETE FROM Subscriptions WHERE targetKind = ? AND target = ? AND principal = ? AND url = ? RETURNING id',
+    const [removed] = this.#sql
+      .exec<{ id: string; expiresAt: string }>(
+        'DELETE FROM Subscriptions WHERE targetKind = ? AND target = ? AND principal = ? AND url = ? RETURNING id, expiresAt',
         key.targetKind,
         key.target,
         key.principal,
         key.url,
       )
       .toArray();
-    return removed[0]?.id;
+    return removed && removed.expiresAt >= new Date().toISOString() ? removed.id : undefined;
   }
 
-  /** The unexpired subscriptions of one kind whose target is one of `targets`. */
+  /**
+   * The subscriptions of one kind whose target is one of `targets`, a lapsed one included, since
+   * the queue makes no attempt past a message's grant.
+   */
   covering(targetKind: string, targets: string[]): Subscription[] {
-    const now = new Date().toISOString();
     return targets.flatMap((target) =>
       this.#sql
         .exec<Subscription & Record<string, SqlStorageValue>>(
-          'SELECT targetKind, target, principal, url, id, secret, form, expiresAt FROM Subscriptions WHERE targetKind = ? AND target = ? AND expiresAt >= ?',
+          'SELECT targetKind, target, principal, url, id, secret, form, expiresAt FROM Subscriptions WHERE targetKind = ? AND target = ?',
           targetKind,
           target,
-          now,
         )
         .toArray(),
     );

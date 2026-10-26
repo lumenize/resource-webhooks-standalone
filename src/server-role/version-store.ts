@@ -167,19 +167,16 @@ export class VersionStore {
   // and reads cost a thousandth as much.
   #prune(now: Date): void {
     const cutoff = new Date(now.getTime() - this.#cutoffWindowMs).toISOString();
-    const pruned = this.#sql
-      .exec<{ stamp: number; deleted: number }>(
-        `DELETE FROM Versions
-         WHERE writtenAt < ?
-           AND (deleted = 1 OR stamp < (SELECT MAX(stamp) FROM Versions AS v WHERE v.path = Versions.path))
-         RETURNING stamp, deleted`,
-        cutoff,
-      )
-      .toArray();
-    // A pruned deletion leaves its path with no row, so the base version moves past it. That is a
-    // write only when a prune drops a deletion.
-    const horizon = Math.max(0, ...pruned.filter((row) => row.deleted).map((row) => row.stamp));
-    if (horizon > this.#horizon()) this.#sql.exec('INSERT OR REPLACE INTO Horizon (id, stamp) VALUES (1, ?)', horizon);
+    // Every deletion older than the cut-off goes, and leaves its path with no row, so the base
+    // version moves past the newest of them. That is a write only when a prune drops a deletion.
+    const { horizon } = this.#sql.exec<{ horizon: number | null }>('SELECT MAX(stamp) AS horizon FROM Versions WHERE writtenAt < ? AND deleted = 1', cutoff).one();
+    this.#sql.exec(
+      `DELETE FROM Versions
+       WHERE writtenAt < ?
+         AND (deleted = 1 OR stamp < (SELECT MAX(stamp) FROM Versions AS v WHERE v.path = Versions.path))`,
+      cutoff,
+    );
+    if (horizon !== null && horizon > this.#horizon()) this.#sql.exec('INSERT OR REPLACE INTO Horizon (id, stamp) VALUES (1, ?)', horizon);
   }
 
   #horizon(): number {

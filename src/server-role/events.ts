@@ -62,7 +62,9 @@ export class Events {
   }
 
   unsubscribe(params: EventsUnsubscribeRequestParams, principal: string | undefined): Result {
-    const id = this.#options.subscriptions.remove(this.#key(params, principal));
+    const key = this.#key(params, principal);
+    this.#options.subscriptions.requireDelivery(key.url);
+    const id = this.#options.subscriptions.remove(key);
     if (id === undefined) throw new JsonRpcError(NOT_FOUND, 'No such subscription', { kind: 'subscription' });
     // SEP-3415: unsubscribing stops webhook deliveries immediately, retries included.
     this.#options.deliveries.cancel(id);
@@ -83,7 +85,7 @@ export class Events {
     const text = JSON.stringify(body);
     for (const row of this.#options.subscriptions.covering(TARGET_KIND, coveringTargets(uri, this.#options.root))) {
       const webhookId = `msg_${randomId(24)}`;
-      this.#options.deliveries.enqueue(webhookId, { url: row.url, secret: row.secret, subscriptionId: row.id, webhookId, body: text });
+      this.#options.deliveries.enqueue(webhookId, { url: row.url, secret: row.secret, subscriptionId: row.id, webhookId, body: text, until: row.expiresAt });
     }
   }
 

@@ -6,7 +6,7 @@ import { afterEach, vi } from 'vitest';
 import { closeEverySocket } from '../client/parties';
 import { callWorker, fakeReceivers, laneEnvFor } from './lane';
 
-// A socket a test leaves open keeps pinging B, and B never idles, which an eviction waits for.
+// A socket a test leaves open keeps pinging B into the next test, so each test closes its own.
 afterEach(() => closeEverySocket());
 
 export const fetchSpy = vi

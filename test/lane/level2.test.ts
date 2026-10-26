@@ -7,6 +7,7 @@ import { Copies } from '../../src/client/copies';
 import { createMcpClient, ExtensionNotDeclaredError, McpError } from '../../src/client/mcp-client';
 import type { ResourceChange } from '../../src/resource-webhooks-types';
 import { FULL_BODY_LIMIT } from '../../src/server-role/resource-webhooks';
+import { subscriptionId } from '../../src/server-role/subscriptions';
 import { newSecret } from '../../src/standard-webhooks';
 import { listen, signedIn, subscribeResource, untilClosed, watch, write, type Party } from '../client/parties';
 import { level2 } from '../scenarios/level2';
@@ -99,6 +100,11 @@ describe("A's subscribe", () => {
     expect(await refusal(subscribeResource(b, uri, endpoint.url(), newSecret(), { form: 'patch' }))).toEqual({ code: -32026, data: { feature: 'form', value: 'patch' } });
     expect(await refusal(subscribeResource(b, uri, endpoint.url(), newSecret(), { catchUp: 'patch' }))).toEqual({ code: -32026, data: { feature: 'catchUp', value: 'patch' } });
     expect(await refusal(subscribeResource(b, uri, endpoint.url(), newSecret(), { listed: true }))).toMatchObject({ code: -32602 });
+    expect(await refusal(b.client.request('resources/webhooks/subscribe', { listed: true, delivery: { url: endpoint.url(), secret: newSecret() } }))).toEqual({
+      code: -32026,
+      data: { feature: 'target', value: 'listed' },
+    });
+    expect(await refusal(b.client.request('resources/webhooks/unsubscribe', { uri, delivery: { url: endpoint.url().replace('https:', 'http:') } }))).toMatchObject({ code: -32602 });
     // Collections and templates are level 2's next step, and refused until then.
     expect(await refusal(subscribeResource(b, `${lane.root}/notes/inbox`, endpoint.url(), newSecret()))).toEqual({ code: -32026, data: { feature: 'target', value: 'collection' } });
     expect(await refusal(b.client.request('resources/webhooks/subscribe', { uriTemplate: `${lane.root}/notes/{+path}`, delivery: { url: endpoint.url(), secret: newSecret() } }))).toEqual({
@@ -108,30 +114,56 @@ describe("A's subscribe", () => {
     expect(endpoint.challenges()).toHaveLength(0);
   });
 
-  it("refuses a missing or mismatched Mcp-Name with HeaderMismatch", async () => {
+  it('refuses a missing or mismatched Mcp-Name with HeaderMismatch, and a header on a listed target', async () => {
     const { lane, uri } = await withNote();
-    const params = { uri, delivery: { url: 'https://receiver.invalid/hook', secret: newSecret() }, _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} } };
-    for (const name of [undefined, `${uri}-other`]) {
+    const meta = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} };
+    const delivery = { url: 'https://receiver.invalid/hook', secret: newSecret() };
+    const cases: [string, Record<string, unknown>, string | undefined][] = [
+      ['resources/webhooks/subscribe', { uri, delivery }, undefined],
+      ['resources/webhooks/subscribe', { uri, delivery }, `${uri}-other`],
+      ['resources/webhooks/unsubscribe', { uri, delivery: { url: delivery.url } }, undefined],
+      ['resources/webhooks/subscribe', { listed: true, delivery }, uri],
+    ];
+    for (const [method, params, name] of cases) {
       const response = await lane.fetch('/mcp', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${await lane.token()}`,
           'MCP-Protocol-Version': '2026-07-28',
-          'Mcp-Method': 'resources/webhooks/subscribe',
+          'Mcp-Method': method,
           ...(name === undefined ? {} : { 'Mcp-Name': name }),
         },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'resources/webhooks/subscribe', params }),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: { ...params, _meta: meta } }),
       });
-      expect({ name, status: response.status, code: ((await response.json()) as { error: { code: number } }).error.code }).toEqual({ name, status: 400, code: -32020 });
+      const label = { method, name, listed: 'listed' in params };
+      expect({ ...label, status: response.status, code: ((await response.json()) as { error: { code: number } }).error.code }).toEqual({ ...label, status: 400, code: -32020 });
     }
   });
 
-  it('keeps the id across a refresh and across a lapse and a new subscribe', async () => {
+  it('counts no lapsed subscription toward the cap, and answers NotFound to unsubscribing one', async () => {
+    const { lane, b } = await withNote();
+    const endpoint = receiver({ deliveries: () => new Response(null, { status: 200 }) });
+    const cap = Number(env.SUBSCRIPTION_CAP);
+    const note = (n: number) => `${lane.root}/notes/inbox/note-${n}`;
+    for (let n = 0; n < cap; n++) await subscribeResource(b, note(n), endpoint.url(), newSecret(), { ttlMs: 60_000 });
+    expect(await refusal(subscribeResource(b, note(cap), endpoint.url(), newSecret()))).toMatchObject({ code: -32025 });
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+    try {
+      vi.setSystemTime(Date.now() + 61_000);
+      expect((await subscribeResource(b, note(cap), endpoint.url(), newSecret())).resultType).toBe('complete');
+      expect(await refusal(b.client.request('resources/webhooks/unsubscribe', { uri: note(0), delivery: { url: endpoint.url() } }))).toEqual({ code: -32023, data: { kind: 'subscription' } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("derives the id from the key with the binding's hash key, and keeps it across a refresh and a lapse", async () => {
     const { b, uri } = await withNote();
     const endpoint = receiver({ deliveries: () => new Response(null, { status: 200 }) });
     const secret = newSecret();
     const first = await subscribeResource(b, uri, endpoint.url(), secret, { ttlMs: 60_000 });
+    expect(first.id).toBe(await subscriptionId(env.SUBSCRIPTION_ID_KEY, [b.clientId, endpoint.url(), 'uri', uri]));
     expect((await subscribeResource(b, uri, endpoint.url(), secret)).id).toBe(first.id);
     vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
     try {
@@ -227,6 +259,45 @@ describe('the base version', () => {
 });
 
 describe("A's deliveries of a ResourceChange", () => {
+  it("makes no attempt once the subscription's grant lapses", async () => {
+    const { a, b, uri } = await withNote();
+    const endpoint = receiver({ deliveries: () => new Response(null, { status: 503 }) });
+    const { refreshBefore } = await subscribeResource(b, uri, endpoint.url(), newSecret(), { ttlMs: 60_000 });
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+    try {
+      await write(a, uri, 'Retried until the grant lapses');
+      await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(1));
+      vi.setSystemTime(Date.parse(refreshBefore!) + 1000);
+      await sleep(scheduleMs);
+      expect(endpoint.deliveries()).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('holds a new subscription\'s delivery until a POST out at the unsubscribe is answered', async () => {
+    const { a, b, uri } = await withNote();
+    let answer!: () => void;
+    const held = new Promise<void>((resolve) => (answer = resolve));
+    const endpoint = receiver({
+      deliveries: async (_received, index) => {
+        if (index === 0) await held;
+        return new Response(null, { status: 200 });
+      },
+    });
+    const secret = newSecret();
+    await subscribeResource(b, uri, endpoint.url(), secret);
+    const v2 = await write(a, uri, 'Out at the unsubscribe');
+    await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(1));
+    await b.client.request('resources/webhooks/unsubscribe', { uri, delivery: { url: endpoint.url() } });
+    await subscribeResource(b, uri, endpoint.url(), secret);
+    const v3 = await write(a, uri, 'After it');
+    await sleep(100);
+    expect(versions(endpoint.deliveries())).toEqual([v2]);
+    answer();
+    await vi.waitFor(() => expect(versions(endpoint.deliveries())).toEqual([v2, v3]));
+  });
+
   it('delivers only the newer of two versions while the receiver answers 503, and never the older after it', async () => {
     const { a, b, uri } = await withNote();
     let accepting = false;
@@ -355,8 +426,38 @@ describe("b's copies", () => {
     hold = undefined;
     release();
     await refreshing;
+    // The crossed result named v4, so it was not taken, and the refresh made again named v5.
     expect(results.slice(1)).toEqual([v4, v5]);
-    expect(copies.get(uri)).toEqual({ version: v5, deleted: false, contents: [{ uri, mimeType: 'application/json', text: '{"title":"Five","done":false}' }] });
+    expect(copies.get(uri)).toEqual({ version: v5, deleted: false });
+  });
+
+  it('keeps each of two overlapping refreshes of one resource, so a delivery that crosses the later one is not lost', async () => {
+    const { lane, a, b, uri } = await withNote();
+    const listener = await listen(lane, b);
+    const gates: (() => void)[] = [];
+    let held = false;
+    const results: string[] = [];
+    const copies = new Copies(async (target, version) => {
+      const result = await subscribeResource(b, target, listener.hookUrl, listener.secret, { ...(version ? { version } : {}) });
+      results.push(result.version!);
+      if (held) await new Promise<void>((resolve) => gates.push(resolve));
+      return result;
+    });
+    listener.onDelivery((change, webhookId) => copies.deliver(change as unknown as ResourceChange, webhookId));
+    const v1 = (await copies.refresh(uri))!.version;
+    held = true;
+    const first = copies.refresh(uri);
+    const second = copies.refresh(uri);
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    held = false;
+    gates[0]();
+    await first;
+    const v2 = await write(a, uri, 'Two');
+    await vi.waitFor(() => expect(copies.get(uri)?.version).toBe(v2));
+    gates[1]();
+    await second;
+    expect(results).toEqual([v1, v1, v1, v2]);
+    expect(copies.get(uri)?.version).toBe(v2);
   });
 });
 
