@@ -1319,10 +1319,17 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 - **The proposal is drafted and committed, not pushed:** `proposals/XXXX-resource-webhooks.md`, commit `0bede26` on the `resource-webhooks` branch of `../experimental-ext-triggers-events`, which was already level with `upstream/main` at `d5316be`. The PR opens on your word, as the phase says.
 - **It names this repo as `lumenize/resource-webhooks-standalone`, which is not public yet,** in its Reference Implementation section, without a link. Either the repo goes public before the PR opens, or that sentence changes.
 - **It follows the SEP template Luca's Task Event Sources draft uses:** Extensions Track, you as author, seeking a sponsor. It copies the requirements from sep-notes.md, gives the Decisions table's rejected alternatives as its Rationale, carries the Findings, and ends with the objections we expect. Its examples use neutral hosts, `notes.example` and `gateway.example`, and only its Findings name the prototype's cast.
-- **Please check the quotes before it goes.** Each comes from the plan's record of SEP-3415's thread and its text, and the reviewing agent checks them against the linked pages where it can, but you were there.
+- **Decide `version` or `revision` before it goes.** The plan chose `version` on 2026-10-20 to match the Filesystems strawman, which renamed its field `revision` later that day. The proposal keeps `version` and asks the question.
+- **Please read how it tells your position on SEP-3415's thread.** It says you argued on 2026-10-16 for keeping state inside Events, quotes your comment, and says the flavor you described is still to come. The wording is mine, from the thread.
 
 **Retro.**
 
 - **`scripts/check-proposal.mjs` checks a proposal's citations and links,** and a harness test shows it failing on a withdrawn number, an undefined one and a link to no file. On the proposal it checked 48 numbers and 11 links, all live, and a copy of the proposal citing R9 failed, as the criterion asks.
 - **sep-notes.md's Findings has an entry for every item of § *What building it should teach us*,** written from what the build measured and showed, and committed with phase 10's fixes.
+- **A reviewing agent read the proposal against its sources and found one blocker, 13 major and 15 minor problems, all fixed in the proposal's second commit.**
+  - The blocker: the Filesystems strawman renamed its field from `version` to `revision` on 2026-10-20, later the same day the plan chose `version` to match it. The proposal now says so, and asks which name to use, as the first bullet for you below does.
+  - Your own position on SEP-3415's thread went unmentioned, and Peter's quote dropped his hedge. The proposal now says you argued the other answer on 2026-10-16, quotes your comment and Peter's in full, and credits @mib00038's split. Each quote was checked against the thread through GitHub's API.
+  - It claimed Events offers no catch-up, though Open Question 2 promises "replay for free". It now says replay sends every step.
+  - It promised the repo would be public, gave the other flavors as certain, and asked things of SEP-3415 during its vote. Each now says only what the sources say.
+  - It lacked what CONTRIBUTING.md asks for, what was tested and what was not, and the template's working group section, and it stated a security rule no requirement backed. Both sections are there, and sep-notes.md has R48 for linear-time template matching.
 - **The full suite passes, 396 tests, the check's two more than phase 10 left.** Phase 11 changed no code the gates or the deployed tier run.
