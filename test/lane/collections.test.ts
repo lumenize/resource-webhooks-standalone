@@ -37,10 +37,12 @@ describe('Scenario 10b: a cursor too old to serve', () => {
       listener = await run.connect();
       const before = results.length;
       await copies.refresh({ uri: inbox });
-      const reset = results.slice(before);
-      expect(reset.every((result) => result.reset === true)).toBe(true);
+      // A's retries to b may still be running and cross the refresh, which then refreshes again
+      // from the reset's final cursor, so only the reset's own results are read.
+      const reset = results.slice(before).filter((result) => result.reset === true);
+      expect(results[before].reset).toBe(true);
       expect(reset.flatMap((result) => result.changes)).toEqual([{ uri: note44, form: 'notify', version: n44v1 }]);
-      expect(copies.get(note43)).toBeUndefined();
+      expect(copies.held()).toEqual([note44]);
       expect(copies.get(note44)).toEqual({ version: n44v1, deleted: false });
     } finally {
       vi.useRealTimers();
@@ -127,14 +129,20 @@ describe('a collection', () => {
     const secret = newSecret();
     const inbox = { uri: `${lane.root}/notes/inbox` };
     const note = `${lane.root}/notes/inbox/note-1`;
+    const { cursor: older } = await subscribeTarget(b, inbox, endpoint.url(), secret);
+    const gone = `${lane.root}/notes/archive/note-8`;
+    await write(a, gone, 'Gone');
+    await a.client.request('tools/call', { name: 'delete_note', arguments: { uri: gone } });
     const { cursor } = await subscribeTarget(b, inbox, endpoint.url(), secret);
     await write(a, note, 'One');
     const edited = await write(a, note, 'One, edited');
     vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
     try {
-      // Past the window, one write elsewhere drops note-1's first version, a change nobody needs.
+      // Past the window, one write elsewhere drops note-8's deletion and note-1's first version.
       vi.setSystemTime(Date.now() + Number(env.CUTOFF_WINDOW_MS) + 1000);
       await write(a, `${lane.root}/notes/archive/note-9`, 'Archived');
+      // The cursor from before the deletion shows the prune ran.
+      expect((await subscribeTarget(b, inbox, endpoint.url(), secret, { cursor: older })).reset).toBe(true);
       const result = await subscribeTarget(b, inbox, endpoint.url(), secret, { cursor });
       expect(result.changes).toEqual([{ uri: note, form: 'notify', version: edited }]);
       expect(result).not.toHaveProperty('reset');
@@ -169,13 +177,19 @@ describe('a collection', () => {
     expect(bodies(endpoint.deliveries())).toEqual([{ uri: at('inbox/sub/note-2'), form: 'notify', version: sub }]);
   });
 
-  it("carries each member's contents in a catch-up asking for full", async () => {
+  it("carries each member's contents in a catch-up asking for full, from nothing and by its cursor", async () => {
     const { lane, a, b } = await parties();
     const endpoint = receiver({ deliveries: () => new Response(null, { status: 200 }) });
     const uri = `${lane.root}/notes/inbox/note-1`;
     const version = await write(a, uri, 'One');
-    const result = await subscribeTarget(b, { uri: `${lane.root}/notes/inbox` }, endpoint.url(), newSecret(), { catchUp: 'full' });
+    const secret = newSecret();
+    const result = await subscribeTarget(b, { uri: `${lane.root}/notes/inbox` }, endpoint.url(), secret, { catchUp: 'full' });
     expect(result.changes).toEqual([{ uri, form: 'full', version, contents: [{ uri, mimeType: 'application/json', text: '{"title":"One","done":false}' }] }]);
+    // And by its cursor, the changes since.
+    const two = `${lane.root}/notes/inbox/note-2`;
+    const twoVersion = await write(a, two, 'Two');
+    const since = await subscribeTarget(b, { uri: `${lane.root}/notes/inbox` }, endpoint.url(), secret, { catchUp: 'full', cursor: result.cursor });
+    expect(since.changes).toEqual([{ uri: two, form: 'full', version: twoVersion, contents: [{ uri: two, mimeType: 'application/json', text: '{"title":"Two","done":false}' }] }]);
   });
 
   it('matches {type} as one segment and {+path} as any depth, and refuses a template with another expression or an unmatched brace', async () => {
@@ -183,16 +197,16 @@ describe('a collection', () => {
     const archives = receiver({ deliveries: () => new Response(null, { status: 200 }) });
     const deep = receiver({ deliveries: () => new Response(null, { status: 200 }) });
     await subscribeTarget(b, { uriTemplate: `${lane.root}/{type}/archive` }, archives.url(), newSecret());
-    await subscribeTarget(b, { uriTemplate: `${lane.root}/notes/{+path}` }, deep.url(), newSecret());
+    await subscribeTarget(b, { uriTemplate: `${lane.root}/notes/{+path}/archive` }, deep.url(), newSecret());
     const note = await write(a, `${lane.root}/notes/archive/note-1`, 'Archived note');
     const list = await writeList(lane, '/lists/archive/list-1', 'Archived list');
-    await write(a, `${lane.root}/notes/x/archive/note-1`, 'Deeper than {type}');
-    const nested = await write(a, `${lane.root}/notes/a/b/c/note-1`, 'Nested');
+    const deeper = await write(a, `${lane.root}/notes/x/archive/note-1`, 'Deeper than {type}');
+    const nested = await write(a, `${lane.root}/notes/a/b/archive/note-1`, 'Nested');
     await vi.waitFor(() => expect(archives.deliveries()).toHaveLength(2));
-    await vi.waitFor(() => expect(deep.deliveries()).toHaveLength(3));
+    await vi.waitFor(() => expect(deep.deliveries()).toHaveLength(2));
     await sleep(scheduleMs);
     expect(bodies(archives.deliveries()).map(({ version }) => version).sort()).toEqual([note, list].sort());
-    expect(bodies(deep.deliveries()).map(({ version }) => version)).toContain(nested);
+    expect(bodies(deep.deliveries()).map(({ version }) => version).sort()).toEqual([deeper, nested].sort());
     for (const uriTemplate of [`${lane.root}/notes/{?q}`, `${lane.root}/notes/{a,b}`, `${lane.root}/notes/{path*}`, `${lane.root}/notes/{type`, `${lane.root}/notes/type}`]) {
       const refused = await subscribeTarget(b, { uriTemplate }, archives.url(), newSecret()).then(
         () => undefined,
@@ -200,6 +214,26 @@ describe('a collection', () => {
       );
       expect(refused).toEqual({ code: -32026, data: { feature: 'uriTemplate', value: uriTemplate } });
     }
+  });
+
+  it('catches up a template and a listed target with exactly what each covers', async () => {
+    const { lane, a, b } = await parties();
+    const endpoint = receiver({ deliveries: () => new Response(null, { status: 200 }) });
+    const at = (path: string) => `${lane.root}${path}`;
+    const archived = await write(a, at('/notes/archive/note-1'), 'Archived');
+    const list = await writeList(lane, '/lists/archive/list-1', 'Archived list');
+    const inboxed = await write(a, at('/notes/inbox/note-2'), 'Inbox');
+    await write(a, at('/notes/x/archive/note-3'), 'Deeper than {type}');
+    const template = await subscribeTarget(b, { uriTemplate: at('/{type}/archive') }, endpoint.url(), newSecret());
+    expect(template.changes).toEqual([
+      { uri: at('/lists/archive/list-1'), form: 'notify', version: list },
+      { uri: at('/notes/archive/note-1'), form: 'notify', version: archived },
+    ]);
+    const listed = await subscribeTarget(b, { listed: true }, endpoint.url(), newSecret());
+    expect(listed.changes).toEqual([
+      { uri: at('/lists/archive/list-1'), form: 'notify', version: list },
+      { uri: at('/notes/inbox/note-2'), form: 'notify', version: inboxed },
+    ]);
   });
 
   it("covers what resources/list returns with a listed target: the inbox's notes and every list, and no archived note", async () => {

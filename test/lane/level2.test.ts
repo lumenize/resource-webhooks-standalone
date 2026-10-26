@@ -422,7 +422,7 @@ describe("b's copies", () => {
     expect(copies.get(uri)).toEqual({ version: v5, deleted: false });
   });
 
-  it('keeps each of two overlapping refreshes of one resource, so a delivery that crosses the later one is not lost', async () => {
+  it('runs a second refresh of one resource after the first, and a delivery that crosses the second is not lost', async () => {
     const { lane, a, b, uri } = await withNote();
     const listener = await listen(lane, b);
     const gates: (() => void)[] = [];
@@ -440,10 +440,13 @@ describe("b's copies", () => {
     held = true;
     const first = copies.refresh({ uri });
     const second = copies.refresh({ uri });
-    await vi.waitFor(() => expect(gates).toHaveLength(2));
-    held = false;
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    // The second waits for the first, so only one request is out.
+    expect(results).toEqual([v1, v1]);
     gates[0]();
     await first;
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    held = false;
     const v2 = await write(a, uri, 'Two');
     await vi.waitFor(() => expect(copies.get(uri)?.version).toBe(v2));
     gates[1]();

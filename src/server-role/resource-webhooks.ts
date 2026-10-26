@@ -47,10 +47,9 @@ export interface ResourceWebhooksOptions {
 
 export class ResourceWebhooks {
   readonly #options: ResourceWebhooksOptions;
-  // Compiled once per template, since each write tests every template subscription.
-  readonly #matchers = new Map<string, (uri: string) => boolean>();
 
   constructor(options: ResourceWebhooksOptions) {
+    if (!Number.isInteger(options.pageSize) || options.pageSize < 1) throw new RangeError(`The page size must be a positive integer, not ${options.pageSize}`);
     this.#options = options;
   }
 
@@ -124,18 +123,9 @@ export class ResourceWebhooks {
     const { subscriptions, root, listed } = this.#options;
     return [
       ...subscriptions.covering('uri', coveringTargets(uri, root)),
-      ...subscriptions.ofKind('uriTemplate').filter((row) => this.#matcher(row.target)?.(uri)),
+      ...subscriptions.ofKind('uriTemplate').filter((row) => templateMatcher(row.target)?.(uri)),
       ...(listed(path) ? subscriptions.ofKind('listed') : []),
     ];
-  }
-
-  #matcher(template: string): ((uri: string) => boolean) | undefined {
-    if (!this.#matchers.has(template)) {
-      const matcher = templateMatcher(template);
-      if (!matcher) return undefined;
-      this.#matchers.set(template, matcher);
-    }
-    return this.#matchers.get(template);
   }
 
   // A collection's changes after a cursor, or every member there is when none is named or A can no
@@ -189,7 +179,7 @@ export class ResourceWebhooks {
     if (targets.length !== 1) throw new JsonRpcError(INVALID_PARAMS, 'A subscription names exactly one of uri, uriTemplate and listed');
     const url = params.delivery.url;
     if (params.uriTemplate !== undefined) {
-      const matcher = this.#matcher(params.uriTemplate);
+      const matcher = templateMatcher(params.uriTemplate);
       if (!matcher) throw new JsonRpcError(UNSUPPORTED, 'A matches a template only by {name} and {+name}', { feature: 'uriTemplate', value: params.uriTemplate });
       const { root } = this.#options;
       return { key: { targetKind: 'uriTemplate', target: params.uriTemplate, principal, url }, coverage: { kind: 'collection', covers: (path) => matcher(`${root}${path}`) } };
@@ -223,7 +213,9 @@ function parseCursor(cursor: string): Cursor | undefined {
 }
 
 function toBase64Url(text: string): string {
-  return btoa(String.fromCharCode(...new TextEncoder().encode(text))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  let binary = '';
+  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function fromBase64Url(text: string): string | undefined {

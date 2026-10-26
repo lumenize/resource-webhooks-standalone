@@ -79,10 +79,11 @@ describe("SSRF through A's handshake", () => {
     }
     for (const [index, name] of REACHED.entries()) expect({ name, ...reached[index] }).toMatchObject({ name, reason: 'challenge_failed', errorCode: 526 });
     for (const [index, name] of TIMED_OUT.entries()) expect({ name, ...timedOut[index] }).toMatchObject({ name, reason: 'timeout', failure: 'timeout' });
-    // Every fetch reaches Google or is refused for the private answer, and each happens at least
-    // once, so a 1u.ms that answered nothing, which reads as 1016, fails the test.
+    // Every fetch reaches Google, is refused for the private answer, or finds no answer, which
+    // 1u.ms gave one fresh name in twelve on 2026-10-25 and reads as 1016. The first two each
+    // happen at least once, so a 1u.ms that answered nothing at all fails the test.
     const codes = rebinding.map(({ errorCode }) => errorCode);
-    expect(codes.every((code) => code === 526 || code === 1002)).toBe(true);
+    expect(codes.every((code) => code === 526 || code === 1002 || code === 1016)).toBe(true);
     expect(codes).toContain(526);
     expect(codes).toContain(1002);
   });

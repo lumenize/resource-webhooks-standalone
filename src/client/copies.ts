@@ -5,8 +5,9 @@
 // page what no page of the reset listed (R32 to R35). It drops a delivery whose webhook-id it has
 // seen or that none of its subscriptions covers, ignores one naming the version it holds (R15),
 // and refreshes again when a delivery arrives while a refresh of the same subscription is
-// outstanding (R41), since the two travel apart and either may arrive first. Like mcp-client.ts it
-// imports nothing but types.
+// outstanding (R41), since the two travel apart and either may arrive first. It runs one refresh
+// of a subscription at a time, so a reset's pages and a crossing belong to the subscription, not
+// to whichever call is out. Like mcp-client.ts it imports nothing but types.
 import type { ResourceChange, ResourceContents, ResourceWebhookSubscribeResult } from '../resource-webhooks-types';
 
 export interface Copy {
@@ -30,13 +31,22 @@ export type Refresh = (target: Target, held: Held) => Promise<ResourceWebhookSub
 
 interface Subscribed {
   target: Target;
+  /** The id its results carry, unknown until the first arrives. */
+  id?: string;
   /** Whether its results are a collection's, as its first result says (R38). */
   collection: boolean;
   cursor?: string;
   /** The members it has brought, so a reset can drop the ones it no longer lists. */
   members: Set<string>;
-  /** Its outstanding refreshes, and whether a delivery crossed each. */
-  refreshing: Set<{ crossed: boolean }>;
+  /**
+   * What the pages of a reset still in progress have listed. It lives beside the cursor, since a
+   * refresh that fails partway leaves the next to finish the reset.
+   */
+  resetListed?: Set<string>;
+  /** The refresh out now, if any, and whether a delivery crossed it. */
+  outstanding?: { crossed: boolean };
+  /** The last refresh queued, which the next waits for. */
+  queue: Promise<void>;
 }
 
 // How many webhook-ids it remembers, enough to cover a delivery's retries.
@@ -66,7 +76,8 @@ export class Copies {
   /**
    * Takes a change a delivery carried, unless it is a repeat, uncovered, or the version held. B
    * passes on the subscription id each delivery came under, and a change is covered when it came
-   * under a subscription held, or, with no id, when it is a held `uri` target or under one.
+   * under a subscription held, or when a held `uri` target names it or a folder above it, which
+   * is how one with no id, or one that beats its subscription's first result, is told.
    */
   deliver(change: ResourceChange, { webhookId, subscriptionId }: { webhookId?: string; subscriptionId?: string } = {}): void {
     if (webhookId !== undefined) {
@@ -74,59 +85,75 @@ export class Copies {
       this.#seen.add(webhookId);
       if (this.#seen.size > SEEN) this.#seen.delete(this.#seen.values().next().value!);
     }
-    const subscribed = subscriptionId !== undefined ? this.#byId.get(subscriptionId) : this.#underUri(change.uri);
+    let subscribed = subscriptionId !== undefined ? this.#byId.get(subscriptionId) : this.#underUri(change.uri);
+    if (!subscribed && subscriptionId !== undefined) {
+      // A delivery can beat the first result, which brings the id, so every first refresh still
+      // out has crossed it, and the change is taken if a held `uri` target covers it.
+      for (const waiting of this.#subscriptions.values()) if (waiting.id === undefined && waiting.outstanding) waiting.outstanding.crossed = true;
+      subscribed = this.#underUri(change.uri);
+    }
     if (!subscribed) return;
     if ('uri' in subscribed.target && change.uri !== subscribed.target.uri && !change.uri.startsWith(`${subscribed.target.uri}/`)) return;
-    for (const outstanding of subscribed.refreshing) outstanding.crossed = true;
+    if (subscribed.outstanding) subscribed.outstanding.crossed = true;
     if (subscribed.collection) subscribed.members.add(change.uri);
     this.#takeChange(change);
   }
 
   /**
-   * Subscribes or refreshes, naming the version or cursor held, through every page. For one
-   * resource, a result a delivery crossed may be older than what the delivery brought, so it is
-   * not taken, and the refresh is made again. A collection's pages are taken, since their cursor
-   * must be kept, and the refresh made again from it, which returns anything the crossing changed.
+   * Subscribes or refreshes, naming the version or cursor held, through every page, once any
+   * refresh of the same subscription already queued has finished. For one resource, a result a
+   * delivery crossed may be older than what the delivery brought, so it is not taken, and the
+   * refresh is made again. A collection's pages are taken, since their cursor must be kept, and
+   * the refresh made again from it, which returns anything the crossing changed.
    */
-  async refresh(target: Target): Promise<void> {
+  refresh(target: Target): Promise<void> {
     const key = keyOf(target);
-    const subscribed = this.#subscriptions.get(key) ?? { target, collection: false, members: new Set<string>(), refreshing: new Set() };
+    const subscribed: Subscribed = this.#subscriptions.get(key) ?? { target, collection: false, members: new Set<string>(), queue: Promise.resolve() };
     this.#subscriptions.set(key, subscribed);
+    const run = subscribed.queue.then(() => this.#refreshUncrossed(subscribed));
+    subscribed.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  async #refreshUncrossed(subscribed: Subscribed): Promise<void> {
+    const { target } = subscribed;
+    const uri = 'uri' in target ? target.uri : undefined;
     for (;;) {
       const outstanding = { crossed: false };
-      subscribed.refreshing.add(outstanding);
+      subscribed.outstanding = outstanding;
       try {
-        const listed = new Set<string>();
-        let reset = false;
         for (let more = true; more; ) {
-          const uri = 'uri' in target ? target.uri : undefined;
           const held: Held = subscribed.collection ? { cursor: subscribed.cursor } : { version: uri === undefined ? undefined : this.#copies.get(uri)?.version };
           const result = await this.#refresh(target, held);
+          subscribed.id = result.id;
           this.#byId.set(result.id, subscribed);
           if (result.cursor === undefined) {
             if (!outstanding.crossed && uri !== undefined) this.#takeResult(uri, result);
             break;
           }
           subscribed.collection = true;
+          if (result.reset) subscribed.resetListed ??= new Set();
+          else subscribed.resetListed = undefined;
           for (const change of result.changes ?? []) {
             subscribed.members.add(change.uri);
-            listed.add(change.uri);
+            subscribed.resetListed?.add(change.uri);
             this.#takeChange(change);
           }
-          reset ||= result.reset === true;
           subscribed.cursor = result.cursor;
           more = result.hasMore === true;
-        }
-        // A reset lists every member there is, so one it held and no page listed is gone (R34).
-        if (reset) {
-          for (const member of subscribed.members) {
-            if (listed.has(member)) continue;
-            subscribed.members.delete(member);
-            this.#copies.delete(member);
+          // A reset lists every member there is, so at its last page one held and no page listed
+          // is gone (R34).
+          if (subscribed.resetListed && !more) {
+            for (const member of subscribed.members) {
+              if (subscribed.resetListed.has(member)) continue;
+              subscribed.members.delete(member);
+              this.#copies.delete(member);
+            }
+            subscribed.resetListed = undefined;
           }
         }
       } finally {
-        subscribed.refreshing.delete(outstanding);
+        subscribed.outstanding = undefined;
       }
       if (!outstanding.crossed) return;
     }
