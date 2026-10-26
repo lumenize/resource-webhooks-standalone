@@ -60,6 +60,7 @@ const ROLE_IMPORTS = [
   /^\.\.\/(json-rpc|tool-types|resource-types|events-types|resource-webhooks-types|standard-webhooks)$/,
   /^\.\.\/[\w-]+\.schema\.json$/,
   /^\.\.\/vendor\/mcp-spec\//,
+  /^\.\.\/vendor\/lumenize-merge-patch\/merge-patch$/,
   /^@cfworker\/json-schema$/,
 ];
 const ROLE_DIRECTORIES = ['src/server-role', 'src/gateway-role'];
@@ -84,7 +85,7 @@ describe("A's and B's role modules", () => {
     expect(Object.fromEntries(files.map((file) => [file, platformUses(file)]))).toEqual(Object.fromEntries(files.map((file) => [file, []])));
   });
 
-  it('import only other role modules, the JSON-RPC core, Standard Webhooks, the types and their schemas', () => {
+  it('import only other role modules, the JSON-RPC core, Standard Webhooks, the merge patch, the types and their schemas', () => {
     const stray = roleFiles().flatMap((file) => importsOf(file).filter((spec) => !ROLE_IMPORTS.some((allowed) => allowed.test(spec))).map((spec) => `${file}: ${spec}`));
     expect(stray).toEqual([]);
     // The same rule finds the transport's own imports, which reach the platform.

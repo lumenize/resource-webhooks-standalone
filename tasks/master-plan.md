@@ -598,7 +598,7 @@ For a resource whose contents are JSON, a delivery can carry an RFC 7396 merge p
 - **A delivery patches from the resource's previous version,** since A has no record of what `b` acknowledged (§ *Only the newest version matters*). A delivery that replaces a pending one keeps that one's starting version instead, which its entry in the retry queue still holds: when `v4` replaces a pending `v3` that was to patch from `v2`, `v4`'s patch starts from `v2` too (Larry, 2026-10-25). If the entry is gone, as after an eviction, the delivery patches from the previous version, and a receiver that lacks it catches up. This assumes a receiver is up to date unless a delivery to it is pending, which holds while an absence is no longer than the retries, and a longer absence ends in a catch-up anyway.
 - **A catch-up asked for as `patch` patches from the version `b` names,** or for a collection from each member's version at the cursor, and carries the full contents when A no longer keeps that version or the contents are not JSON. A patch names the version it starts from, so `b` applies one only when it holds that version, and otherwise catches up.
 - **HTTP's delta encoding works the same way.** RFC 3229's `A-IM` request header says which deltas a client accepts, and a `226 IM Used` response carries one.
-- **A patch is the field `mergePatch`,** leaving room for a `jsonPatch` later, and names the version it starts from beside the new `version`. A root that is not an object is replaced whole, as RFC 7396 says.
+- **A patch is the field `mergePatch`,** leaving room for a `jsonPatch` later, and names the version it starts from in `fromVersion`, beside the new `version`. A root that is not an object is replaced whole, as RFC 7396 says.
 - **What a patch's value is.** A resource whose `contents` holds one `application/json` text entry is patched on its parsed body. Any other resource, a created one, and a catch-up with no starting version all go as `full`.
 - **No value holds a `null` member,** since a merge patch reads `null` as a deletion. A's closed schemas refuse one, and a server whose values could hold one sends `full` for that change.
 - **In a collection's catch-up, a member whose patch starts from a version `b` does not hold** is read again by `b`, by `resources/read` or `GET`, rather than caught up again, since deliveries may have moved `b` past the cursor's version (Claude, 2026-10-25, while Larry was away).
@@ -650,6 +650,8 @@ interface ResourceWebhookSubscribeResult extends Result {
   version?: string;                     // one resource: its current version
   deleted?: true;                       // that version deleted the resource
   contents?: (TextResourceContents | BlobResourceContents)[];  // catchUp full
+  fromVersion?: string;                 // catchUp patch: the version named
+  mergePatch?: JSONValue;               // catchUp patch: from it to version
   changes?: ResourceChange[];           // a collection: each member changed
                                         // since the cursor, at its newest version
   cursor?: string;                      // a collection: where this result stops
@@ -666,6 +668,9 @@ type ResourceChange = { uri: string } & (
   | { form: "notify"; version: string; deleted: true }
   | { form: "full"; version: string;
       contents: (TextResourceContents | BlobResourceContents)[] }
+  | { form: "patch"; version: string;
+      fromVersion: string;              // the version the patch starts from
+      mergePatch: JSONValue }           // RFC 7396, of the one JSON entry
 );
 ```
 
@@ -1243,3 +1248,27 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 **Close-out.**
 
 - **The placeholder page from phase 1 is gone.**
+
+### Phase 9
+
+**For Larry.**
+
+- **I named the field for the version a patch starts from `fromVersion`,** since the wire section left it unnamed and "base version" already names what R37 mints. A delivery's patch and a result's both carry it beside `version`, and the name is yours to change.
+- **A list's patch carries the whole list,** since RFC 7396 replaces an array whole. For a list of 100 items with one item changed, a delivery is 1183 bytes as `patch` against 1531 as `full`, and for a note whose `done` changed 190 against 347. sep-notes.md's Findings has the figures. A value that kept its items in an object keyed by id would patch one item at a time, which may be worth a line in the proposal.
+- **A declares all three forms now,** so no request to A reaches R7's `Unsupported` for an undeclared form, since any other value fails the schema first. The check stays, as R7 asks it of any server declaring fewer, and a unit test holds it.
+
+**Retro.**
+
+- **Where a patch starts:** the queue keeps each slot's undelivered message, and a patch message carries the version it starts from, so a patch that replaces one asks the slot where that one started (R43). With no message waiting, as after a delivery got through or a restart dropped the queue, it starts from the resource's previous version, and a receiver that holds another catches up.
+- **The store finds a version's row by its stamp, the row before a version, and a path's row at a cursor's stamp,** each only within the epoch, so a base version or an earlier epoch's version finds nothing and the change goes `full`.
+- **`Copies` applies a patch only to the version it starts from (R45).** Otherwise it refreshes one resource, naming the version it holds, and reads a collection's member again through a `read` callback, one read per member at a time, made again if a delivery for it crossed the read.
+- **`copies.ts` imports the copied merge patch by its `.ts` path,** the only one Node's type stripping resolves. The Worker's tsconfig allows `.ts` imports, and the page's rewrites them to `.js` as it compiles.
+- **`applyMergePatch` and `setOwn` are copied from lumenize at `6689336`,** past the published 0.26.0, which predates their fix for `__proto__`, and ATTRIBUTIONS.md lists them. The `diff` beside them is this repo's own, for plain JSON, and answers `same`, one patch, or `full` for a value holding a `null` member.
+- **15 mutations, 13 caught by the test aimed at them on the first run.** The two that survived had fixtures in the safe shape: every non-JSON case also failed to parse, so the check on the type never decided, and the prune left no version at all, so patching from the newest kept one also fell back to the contents. Each test now has the dangerous shape.
+- **Unexercised:** a delivery crossing `Copies`' re-read of a member, which reads again, as a crossing refresh does.
+- **The full suite passes, 376 tests, 50 more than phase 8 left,** both type-checks pass, both conformance gates still exit 0 at their baselines, and the deployed tier passes its six files on a fresh deploy. The role modules' import check now allows the merge patch, which touches no platform type.
+
+**Close-out.**
+
+- **R42 to R46 are written,** and sep-notes.md's § *Pending* no longer waits for the `patch` form's rules.
+- **Phase 6's test that `patch` answers `Unsupported` is gone,** since A offers `patch` now.

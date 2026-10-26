@@ -8,6 +8,8 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // The client modules import by `.ts` path, which Node needs to run them with types stripped.
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": ["@cloudflare/vitest-plugin/types"]
   },

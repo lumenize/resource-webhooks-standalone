@@ -15,7 +15,8 @@ import type {
   ResourceWebhookSubscribeResult,
   ResourceWebhookUnsubscribeRequestParams,
 } from '../resource-webhooks-types';
-import { INVALID_PARAMS, type Result } from '../vendor/mcp-spec/2026-07-28/schema';
+import { diff, type JsonValue } from '../vendor/lumenize-merge-patch/merge-patch';
+import { INVALID_PARAMS, type JSONValue, type Result } from '../vendor/mcp-spec/2026-07-28/schema';
 import { randomId, type Deliveries } from './deliveries';
 import { coveringTargets, type Subscription, type SubscriptionKey, type Subscriptions } from './subscriptions';
 import { parseTarget } from './targets';
@@ -23,7 +24,7 @@ import { templateMatcher } from './uri-templates';
 import type { Row, VersionStore } from './version-store';
 
 /** The forms A delivers, as its capability declares them. */
-export const FORMS: readonly ResourceWebhookForm[] = ['notify', 'full'];
+export const FORMS: readonly ResourceWebhookForm[] = ['notify', 'full', 'patch'];
 
 /** The largest body A sends in the `full` form, SEP-3415's delivery profile, past which it sends `notify` (R27). */
 export const FULL_BODY_LIMIT = 256 * 1024;
@@ -78,8 +79,12 @@ export class ResourceWebhooks {
     const state = store.state(coverage.path);
     const result: ResourceWebhookSubscribeResult = { resultType: 'complete', id, refreshBefore, version: state.version };
     if (state.deleted) return { ...result, deleted: true };
-    if (catchUp === 'full' && params.version !== state.version) return { ...result, contents: [contentsOf(coverage.path, state.contents)] };
-    return result;
+    if (catchUp === 'notify' || params.version === state.version) return result;
+    const after = contentsOf(coverage.path, state.contents);
+    // A patch from the version the client names, when A still keeps it; the contents otherwise.
+    const from = catchUp === 'patch' && params.version !== undefined ? store.at(coverage.path, params.version) : undefined;
+    const patch = from && !from.deleted ? patchBetween(contentsOf(coverage.path, from.contents), after) : undefined;
+    return patch !== undefined ? { ...result, fromVersion: params.version, mergePatch: patch } : { ...result, contents: [after] };
   }
 
   unsubscribe(params: ResourceWebhookUnsubscribeRequestParams, principal: string | undefined): Result {
@@ -113,8 +118,26 @@ export class ResourceWebhooks {
     for (const row of this.#covering(path, uri)) {
       // A new message for each version, with its own webhook-id, kept across that version's retries (R14).
       const webhookId = `msg_${randomId(24)}`;
-      deliveries.enqueue(`${row.id}\n${uri}`, { url: row.url, secret: row.secret, subscriptionId: row.id, webhookId, body: bodyFor(row.form), until: row.expiresAt });
+      const slot = `${row.id}\n${uri}`;
+      const patch = row.form === 'patch' && !deleted ? this.#patchFor(slot, path, uri, version) : undefined;
+      const message = { url: row.url, secret: row.secret, subscriptionId: row.id, webhookId, until: row.expiresAt };
+      deliveries.enqueue(slot, patch ? { ...message, body: patch.body, patchFrom: patch.from } : { ...message, body: bodyFor(row.form === 'patch' ? 'full' : row.form) });
     }
+  }
+
+  // A delivery's patch: from where the delivery it replaces started, while one waits in the queue,
+  // since the receiver never got it, or else from the previous version (R43). Undefined when no
+  // patch can start there, as for a created resource, and the delivery goes full.
+  #patchFor(slot: string, path: string, uri: string, version: string): { body: string; from: string } | undefined {
+    const { store, deliveries, contentsOf } = this.#options;
+    const current = store.current(path) as { contents: string };
+    const start = deliveries.startOf(slot);
+    const from = start !== undefined ? store.at(path, start) : store.before(path, version);
+    if (!from || from.deleted) return undefined;
+    const patch = patchBetween(contentsOf(path, from.contents), contentsOf(path, current.contents));
+    if (patch === undefined) return undefined;
+    const change: ResourceChange = { uri, form: 'patch', version, fromVersion: from.version, mergePatch: patch };
+    return { body: JSON.stringify(change), from: from.version };
   }
 
   // Every live or lapsed subscription covering a write at `path`: a uri naming it or a folder above
@@ -144,7 +167,7 @@ export class ResourceWebhooks {
     const page = rows.slice(0, pageSize);
     const hasMore = rows.length > pageSize;
     return {
-      changes: page.map((row) => this.#change(row, form)),
+      changes: page.map((row) => this.#change(row, form, parsed.stamp)),
       cursor: `c${epoch}.${hasMore ? page.at(-1)!.stamp : store.newestStamp()}`,
       ...(hasMore ? { hasMore: true as const } : {}),
     };
@@ -166,11 +189,18 @@ export class ResourceWebhooks {
     };
   }
 
-  #change(row: Row, form: ResourceWebhookForm): ResourceChange {
-    const uri = `${this.#options.root}${row.path}`;
+  // A member's change in a catch-up's form. A patch starts from the member's version at the
+  // cursor, so a listing, which names none, and a member created since, carry the contents (R44).
+  #change(row: Row, form: ResourceWebhookForm, cursorStamp?: number): ResourceChange {
+    const { root, store, contentsOf } = this.#options;
+    const uri = `${root}${row.path}`;
     if (row.deleted) return { uri, form: 'notify', version: row.version, deleted: true };
-    if (form === 'full') return { uri, form: 'full', version: row.version, contents: [this.#options.contentsOf(row.path, row.contents)] };
-    return { uri, form: 'notify', version: row.version };
+    if (form === 'notify') return { uri, form: 'notify', version: row.version };
+    const after = contentsOf(row.path, row.contents);
+    const from = form === 'patch' && cursorStamp !== undefined ? store.asOf(row.path, cursorStamp) : undefined;
+    const patch = from && !from.deleted ? patchBetween(contentsOf(row.path, from.contents), after) : undefined;
+    if (patch !== undefined) return { uri, form: 'patch', version: row.version, fromVersion: from!.version, mergePatch: patch };
+    return { uri, form: 'full', version: row.version, contents: [after] };
   }
 
   #key(params: { uri?: string; uriTemplate?: string; listed?: true; delivery: { url: string } }, principal: string | undefined): { key: SubscriptionKey; coverage: Coverage } {
@@ -226,9 +256,34 @@ function fromBase64Url(text: string): string | undefined {
   }
 }
 
-// A form A declared, `notify` when none is named, or `Unsupported` naming the one it did not (R5, R7).
-function declared(feature: 'form' | 'catchUp', value: ResourceWebhookForm | undefined): ResourceWebhookForm {
+/**
+ * The merge patch from one version's contents to another's, for a resource whose contents are one
+ * JSON text entry, or undefined when the change must go whole: other contents, or a value no patch
+ * can reach, as one holding a `null` member (R42).
+ */
+export function patchBetween(before: ResourceContents, after: ResourceContents): JSONValue | undefined {
+  const parsed = [before, after].map(jsonOf);
+  if (parsed.some((value) => value === undefined)) return undefined;
+  const found = diff(parsed[0]!, parsed[1]!);
+  if (found.kind === 'full') return undefined;
+  return found.kind === 'same' ? {} : found.patch;
+}
+
+function jsonOf(entry: ResourceContents): JsonValue | undefined {
+  if (entry.mimeType !== 'application/json' || !('text' in entry)) return undefined;
+  try {
+    return JSON.parse(entry.text) as JsonValue;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A form the server declared, `notify` when none is named, or `Unsupported` naming the one it did
+ * not (R5, R7). A declares every form, so only a server declaring fewer reaches the refusal.
+ */
+export function declared(feature: 'form' | 'catchUp', value: ResourceWebhookForm | undefined, forms: readonly ResourceWebhookForm[] = FORMS): ResourceWebhookForm {
   const form = value ?? 'notify';
-  if (!FORMS.includes(form)) throw new JsonRpcError(UNSUPPORTED, `A does not offer the ${form} form`, { feature, value: form });
+  if (!forms.includes(form)) throw new JsonRpcError(UNSUPPORTED, `The server does not offer the ${form} form`, { feature, value: form });
   return form;
 }

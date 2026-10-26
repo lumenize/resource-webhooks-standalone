@@ -317,6 +317,47 @@
                             "type": "object"
                         }
                     ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "properties": {
+                                "uri": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "uri"
+                            ],
+                            "type": "object"
+                        },
+                        {
+                            "properties": {
+                                "form": {
+                                    "const": "patch",
+                                    "type": "string"
+                                },
+                                "fromVersion": {
+                                    "description": "The version the patch starts from, which a client applies it to only if it holds it.",
+                                    "type": "string"
+                                },
+                                "mergePatch": {
+                                    "$ref": "#/$defs/JSONValue",
+                                    "description": "An RFC 7396 merge patch of the resource's one JSON text entry, parsed."
+                                },
+                                "version": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "form",
+                                "fromVersion",
+                                "mergePatch",
+                                "version"
+                            ],
+                            "type": "object"
+                        }
+                    ]
                 }
             ],
             "description": "What a webhook delivery carries: one version of one resource."
@@ -626,6 +667,10 @@
                     "$ref": "#/$defs/WebhookDeliveryStatus",
                     "description": "As SEP-3415 defines it."
                 },
+                "fromVersion": {
+                    "description": "For one resource, when `catchUp` is `patch`: the version the patch starts from, the client's.",
+                    "type": "string"
+                },
                 "hasMore": {
                     "const": true,
                     "description": "For a collection, more changes: refresh again with the cursor.",
@@ -634,6 +679,28 @@
                 "id": {
                     "description": "Derived from the subscription key, and carried in `X-MCP-Subscription-Id` on every delivery.",
                     "type": "string"
+                },
+                "mergePatch": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/JSONObject"
+                        },
+                        {
+                            "items": {
+                                "$ref": "#/$defs/JSONValue"
+                            },
+                            "type": "array"
+                        },
+                        {
+                            "type": [
+                                "null",
+                                "string",
+                                "integer",
+                                "boolean"
+                            ]
+                        }
+                    ],
+                    "description": "For one resource, when `catchUp` is `patch`: an RFC 7396 merge patch from `fromVersion` to `version`."
                 },
                 "refreshBefore": {
                     "description": "When the grant ends, or `null` for no expiry.",

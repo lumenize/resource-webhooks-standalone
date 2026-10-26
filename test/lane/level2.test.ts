@@ -92,13 +92,11 @@ describe("A's subscribe", () => {
     expect(refreshed).not.toHaveProperty('contents');
   });
 
-  it('refuses a URI A could never serve with InvalidParams, and a form A did not declare with Unsupported', async () => {
+  it('refuses a URI A could never serve, a second target and a plain-http URL with InvalidParams', async () => {
     const { lane, b, uri } = await withNote();
     const endpoint = receiver({ deliveries: () => new Response(null, { status: 200 }) });
     expect(await refusal(subscribeResource(b, `${lane.root}/nowhere/note-1`, endpoint.url(), newSecret()))).toEqual({ code: -32602, data: { uri: `${lane.root}/nowhere/note-1` } });
     expect(await refusal(subscribeResource(b, 'https://elsewhere.example/notes/note-1', endpoint.url(), newSecret()))).toMatchObject({ code: -32602 });
-    expect(await refusal(subscribeResource(b, uri, endpoint.url(), newSecret(), { form: 'patch' }))).toEqual({ code: -32026, data: { feature: 'form', value: 'patch' } });
-    expect(await refusal(subscribeResource(b, uri, endpoint.url(), newSecret(), { catchUp: 'patch' }))).toEqual({ code: -32026, data: { feature: 'catchUp', value: 'patch' } });
     expect(await refusal(subscribeResource(b, uri, endpoint.url(), newSecret(), { listed: true }))).toMatchObject({ code: -32602 });
     expect(await refusal(b.client.request('resources/webhooks/unsubscribe', { uri, delivery: { url: endpoint.url().replace('https:', 'http:') } }))).toMatchObject({ code: -32602 });
 

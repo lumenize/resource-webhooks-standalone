@@ -7,8 +7,11 @@
 // and refreshes again when a delivery arrives while a refresh of the same subscription is
 // outstanding (R41), since the two travel apart and either may arrive first. It runs one refresh
 // of a subscription at a time, so a reset's pages and a crossing belong to the subscription, not
-// to whichever call is out. Like mcp-client.ts it imports nothing but types.
+// to whichever call is out. It applies a merge patch only to the version the patch starts from,
+// and otherwise refreshes one resource or reads a collection's member again (R45). Besides types
+// it imports only the copied merge patch, by its `.ts` path, so Node runs it with types stripped.
 import type { ResourceChange, ResourceContents, ResourceWebhookSubscribeResult } from '../resource-webhooks-types';
+import { applyMergePatch, type JsonValue } from '../vendor/lumenize-merge-patch/merge-patch.ts';
 
 export interface Copy {
   version: string;
@@ -28,6 +31,9 @@ export interface Held {
 
 /** Subscribes to a target or refreshes it. */
 export type Refresh = (target: Target, held: Held) => Promise<ResourceWebhookSubscribeResult>;
+
+/** Reads one resource again, by `resources/read` or `GET`, at whatever version it has now. */
+export type Read = (uri: string) => Promise<Copy>;
 
 interface Subscribed {
   target: Target;
@@ -54,14 +60,19 @@ const SEEN = 1000;
 
 export class Copies {
   readonly #refresh: Refresh;
+  readonly #read?: Read;
   readonly #copies = new Map<string, Copy>();
   readonly #subscriptions = new Map<string, Subscribed>();
   // Each subscription by the id its results and its deliveries carry.
   readonly #byId = new Map<string, Subscribed>();
   readonly #seen = new Set<string>();
+  // Each member being read again, and whether a delivery for it arrived meanwhile.
+  readonly #reading = new Map<string, { crossed: boolean }>();
 
-  constructor(refresh: Refresh) {
+  /** `read` reads a collection's member again when a patch starts from a version not held. */
+  constructor(refresh: Refresh, read?: Read) {
     this.#refresh = refresh;
+    this.#read = read;
   }
 
   get(uri: string): Copy | undefined {
@@ -100,8 +111,10 @@ export class Copies {
     if (!subscribed) return;
     if ('uri' in subscribed.target && change.uri !== subscribed.target.uri && !change.uri.startsWith(`${subscribed.target.uri}/`)) return;
     if (subscribed.outstanding) subscribed.outstanding.crossed = true;
+    const reading = this.#reading.get(change.uri);
+    if (reading) reading.crossed = true;
     if (subscribed.collection) subscribed.members.add(change.uri);
-    this.#takeChange(change);
+    this.#takeChange(change, subscribed);
   }
 
   /**
@@ -133,7 +146,8 @@ export class Copies {
           subscribed.id = result.id;
           this.#byId.set(result.id, subscribed);
           if (result.cursor === undefined) {
-            if (!outstanding.crossed && uri !== undefined) this.#takeResult(uri, result);
+            // A patch from a version no longer held, as after a crossing, is made again.
+            if (!outstanding.crossed && uri !== undefined && !this.#takeResult(uri, result)) outstanding.crossed = true;
             break;
           }
           subscribed.collection = true;
@@ -142,7 +156,7 @@ export class Copies {
           for (const change of result.changes ?? []) {
             subscribed.members.add(change.uri);
             subscribed.resetListed?.add(change.uri);
-            this.#takeChange(change);
+            this.#takeChange(change, subscribed);
           }
           subscribed.cursor = result.cursor;
           more = result.hasMore === true;
@@ -171,19 +185,70 @@ export class Copies {
     return undefined;
   }
 
-  #takeChange(change: ResourceChange): void {
-    if (this.#copies.get(change.uri)?.version === change.version) return;
+  #takeChange(change: ResourceChange, subscribed: Subscribed): void {
+    const held = this.#copies.get(change.uri);
+    if (held?.version === change.version) return;
+    if (change.form === 'patch') {
+      const copy = patched(held, change.fromVersion, change.version, change.mergePatch);
+      if (copy) this.#copies.set(change.uri, copy);
+      // Deliveries may have moved b past the cursor's version, so a member is read again rather
+      // than caught up by the cursor, and one resource is refreshed, naming the version held.
+      else if (subscribed.collection && this.#read) void this.#readAgain(change.uri);
+      else void this.refresh(subscribed.target);
+      return;
+    }
     const deleted = change.form === 'notify' && change.deleted === true;
     this.#copies.set(change.uri, { version: change.version, deleted, ...(change.form === 'full' ? { contents: change.contents } : {}) });
   }
 
-  #takeResult(uri: string, result: ResourceWebhookSubscribeResult): void {
-    if (result.version === undefined) return;
+  // Whether the result was taken, or held no news. A patch from a version not held is not taken.
+  #takeResult(uri: string, result: ResourceWebhookSubscribeResult): boolean {
+    if (result.version === undefined) return true;
     const held = this.#copies.get(uri);
+    if (result.mergePatch !== undefined) {
+      const copy = patched(held, result.fromVersion, result.version, result.mergePatch);
+      if (copy) this.#copies.set(uri, copy);
+      return copy !== undefined;
+    }
     // The same version with no contents is no news, and keeps the contents already held.
-    if (held?.version === result.version && !result.contents) return;
+    if (held?.version === result.version && !result.contents) return true;
     this.#copies.set(uri, { version: result.version, deleted: result.deleted === true, ...(result.contents ? { contents: result.contents } : {}) });
+    return true;
   }
+
+  // Reads a member again, once at a time, and again if a delivery for it arrived meanwhile, since
+  // the two travel apart as a refresh and a delivery do (R41).
+  async #readAgain(uri: string): Promise<void> {
+    if (this.#reading.has(uri)) return;
+    const reading = { crossed: false };
+    this.#reading.set(uri, reading);
+    try {
+      for (;;) {
+        reading.crossed = false;
+        const copy = await this.#read!(uri);
+        if (reading.crossed) continue;
+        this.#copies.set(uri, copy);
+        return;
+      }
+    } finally {
+      this.#reading.delete(uri);
+    }
+  }
+}
+
+// The copy a merge patch makes of the one held, if it holds the version the patch starts from, as
+// one JSON text entry. Undefined otherwise, since a patch applies to nothing else (R45).
+function patched(held: Copy | undefined, fromVersion: string | undefined, version: string, mergePatch: unknown): Copy | undefined {
+  if (!held || held.deleted || held.version !== fromVersion || held.contents?.length !== 1) return undefined;
+  const [entry] = held.contents;
+  if (entry.mimeType !== 'application/json' || !('text' in entry)) return undefined;
+  let value: JsonValue;
+  try {
+    value = JSON.parse(entry.text) as JsonValue;
+  } catch {
+    return undefined;
+  }
+  return { version, deleted: false, contents: [{ ...entry, text: JSON.stringify(applyMergePatch(value, mergePatch as JsonValue)) }] };
 }
 
 function keyOf(target: Target): string {

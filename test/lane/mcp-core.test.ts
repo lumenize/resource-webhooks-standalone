@@ -76,7 +76,7 @@ describe('the core methods', () => {
       capabilities: {
         tools: {},
         resources: {},
-        extensions: { 'io.modelcontextprotocol/events': {}, 'io.modelcontextprotocol/resource-webhooks': { forms: ['notify', 'full'] } },
+        extensions: { 'io.modelcontextprotocol/events': {}, 'io.modelcontextprotocol/resource-webhooks': { forms: ['notify', 'full', 'patch'] } },
       },
       ttlMs: 0,
       cacheScope: 'public',

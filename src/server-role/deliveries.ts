@@ -64,6 +64,8 @@ export interface Message {
   body: string;
   /** When the subscription's grant ends, as an ISO string, after which no attempt is made. */
   until?: string;
+  /** For a merge patch, the version it starts from, which a message replacing this one keeps. */
+  patchFrom?: string;
 }
 
 // SEP-3415 asks for 3 to 5 attempts over no more than 10 to 15 minutes. The window stops short of
@@ -91,6 +93,8 @@ export function clampSchedule(delays: readonly number[]): number[] {
 // delivered as soon as its POST is answered or at once if it is waiting.
 interface Slot {
   subscriptionId: string;
+  /** The message being delivered. */
+  current: Message;
   pending?: Message;
   cancelled: boolean;
   /** A POST is out, which an unsubscribe lets finish before the slot takes another message. */
@@ -148,6 +152,16 @@ export class Deliveries {
   }
 
   /** Delivers `message` in `slot`, retrying on A's schedule, unless a newer one replaces it. */
+  /**
+   * Where a patch for the slot starts, while one not yet delivered holds it: the newest message
+   * waiting, or the one being delivered. A message that replaces it never reaches the receiver
+   * before it, so the receiver holds what the replaced one patched from.
+   */
+  startOf(slot: string): string | undefined {
+    const state = this.#slots.get(slot);
+    return (state?.pending ?? state?.current)?.patchFrom;
+  }
+
   enqueue(slot: string, message: Message): void {
     const existing = this.#slots.get(slot);
     if (existing) {
@@ -188,7 +202,7 @@ export class Deliveries {
   // Each message runs under its own waitUntil, which holds the object up to 15 minutes from the
   // promise's start, so the schedule's window is measured from the message's first attempt.
   #start(slot: string, message: Message): void {
-    const state: Slot = { subscriptionId: message.subscriptionId, cancelled: false, posting: false };
+    const state: Slot = { subscriptionId: message.subscriptionId, current: message, cancelled: false, posting: false };
     this.#slots.set(slot, state);
     this.#options.waitUntil(this.#deliver(slot, state, message));
   }

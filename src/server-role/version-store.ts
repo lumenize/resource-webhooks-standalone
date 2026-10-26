@@ -73,15 +73,24 @@ export class VersionStore {
 
   /** The newest row for a path relative to A's root, as `/notes/inbox/note-42`. */
   current(path: string): Current | undefined {
-    const row = this.#sql
-      .exec<VersionRow>(
-        'SELECT stamp, contents, deleted FROM Versions WHERE path = ? ORDER BY stamp DESC LIMIT 1',
-        path,
-      )
-      .toArray()[0];
-    if (!row) return undefined;
-    const version = this.#version(row.stamp);
-    return row.deleted ? { version, deleted: true } : { version, deleted: false, contents: row.contents! };
+    return this.#rowWhere(path, 'stamp >= ?', 0);
+  }
+
+  /** The path's row at `version`, if this epoch wrote it and A still keeps it. */
+  at(path: string, version: string): Current | undefined {
+    const stamp = this.#stampOf(version);
+    return stamp === undefined ? undefined : this.#rowWhere(path, 'stamp = ?', stamp);
+  }
+
+  /** The path's row before the one at `version`, if A still keeps it, as a patch starts from. */
+  before(path: string, version: string): Current | undefined {
+    const stamp = this.#stampOf(version);
+    return stamp === undefined ? undefined : this.#rowWhere(path, 'stamp < ?', stamp);
+  }
+
+  /** The path's newest row at or before `stamp`, a cursor's, if A still keeps it. */
+  asOf(path: string, stamp: number): Current | undefined {
+    return this.#rowWhere(path, 'stamp <= ?', stamp);
   }
 
   /**
@@ -192,6 +201,20 @@ export class VersionStore {
     this.#sql.exec('DELETE FROM Horizon');
     this.#sql.exec('INSERT OR REPLACE INTO Epoch (id, value) VALUES (1, ?)', epoch);
     return epoch;
+  }
+
+  // The path's newest row that `where` admits, as a version of this epoch.
+  #rowWhere(path: string, where: string, stamp: number): Current | undefined {
+    const row = this.#sql.exec<VersionRow>(`SELECT stamp, contents, deleted FROM Versions WHERE path = ? AND ${where} ORDER BY stamp DESC LIMIT 1`, path, stamp).toArray()[0];
+    if (!row) return undefined;
+    const version = this.#version(row.stamp);
+    return row.deleted ? { version, deleted: true } : { version, deleted: false, contents: row.contents! };
+  }
+
+  // A version's stamp, if it is a row's version in this epoch, never a base version.
+  #stampOf(version: string): number | undefined {
+    const match = /^e(\d+)\.(\d+)$/.exec(version);
+    return match && Number(match[1]) === this.epoch() ? Number(match[2]) : undefined;
   }
 
   #rows(query: string, from: string | number, covers: (path: string) => boolean, limit: number): Row[] {

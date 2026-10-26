@@ -5,6 +5,7 @@ import type { WebhookDeliveryStatus } from './events-types';
 import type {
   BlobResourceContents,
   JSONRPCRequest,
+  JSONValue,
   RequestParams,
   Result,
   TextResourceContents,
@@ -65,6 +66,10 @@ export interface ResourceWebhookSubscribeResult extends Result {
   deleted?: true;
   /** For one resource, when `catchUp` is `full` and the client's version differs. */
   contents?: ResourceContents[];
+  /** For one resource, when `catchUp` is `patch`: the version the patch starts from, the client's. */
+  fromVersion?: string;
+  /** For one resource, when `catchUp` is `patch`: an RFC 7396 merge patch from `fromVersion` to `version`. */
+  mergePatch?: JSONValue;
   /** For a collection, each member changed since the cursor, at its newest version. */
   changes?: ResourceChange[];
   /** For a collection, where this result stops. */
@@ -91,4 +96,12 @@ export interface ResourceWebhookUnsubscribeRequest extends JSONRPCRequest {
 export type ResourceChange = { uri: string } & (
   | { form: 'notify'; version: string; deleted?: true }
   | { form: 'full'; version: string; contents: ResourceContents[] }
+  | {
+      form: 'patch';
+      version: string;
+      /** The version the patch starts from, which a client applies it to only if it holds it. */
+      fromVersion: string;
+      /** An RFC 7396 merge patch of the resource's one JSON text entry, parsed. */
+      mergePatch: JSONValue;
+    }
 );

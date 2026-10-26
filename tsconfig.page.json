@@ -3,6 +3,9 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
+    // `.ts` imports become `.js` in what the browser loads.
+    "allowImportingTsExtensions": false,
+    "rewriteRelativeImportExtensions": true,
     "rootDir": "src",
     "outDir": "public/js",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],

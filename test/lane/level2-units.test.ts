@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { Copies, type Held } from '../../src/client/copies';
 import type { ResourceChange, ResourceWebhookSubscribeResult } from '../../src/resource-webhooks-types';
-import { ResourceWebhooks, type ResourceWebhooksOptions } from '../../src/server-role/resource-webhooks';
+import { declared, patchBetween, ResourceWebhooks, type ResourceWebhooksOptions } from '../../src/server-role/resource-webhooks';
 import { subscriptionId } from '../../src/server-role/subscriptions';
 
 describe("a subscription's id", () => {
@@ -23,6 +23,37 @@ describe('the page size', () => {
       expect(() => new ResourceWebhooks({ pageSize } as ResourceWebhooksOptions)).toThrow(RangeError);
     }
     expect(() => new ResourceWebhooks({ pageSize: 1 } as ResourceWebhooksOptions)).not.toThrow();
+  });
+});
+
+describe('a form', () => {
+  it('is notify when none is named, and Unsupported, naming it, when the server did not declare it', () => {
+    expect(declared('form', undefined, ['notify'])).toBe('notify');
+    expect(declared('catchUp', 'patch', ['notify', 'patch'])).toBe('patch');
+    expect(() => declared('form', 'full', ['notify'])).toThrow(expect.objectContaining({ code: -32026, data: { feature: 'form', value: 'full' } }));
+    expect(() => declared('catchUp', 'patch', ['notify', 'full'])).toThrow(expect.objectContaining({ code: -32026, data: { feature: 'catchUp', value: 'patch' } }));
+  });
+});
+
+describe('a patch between two versions', () => {
+  const uri = 'https://a.example/server/A/notes/inbox/note-42';
+  const json = (value: unknown) => ({ uri, mimeType: 'application/json', text: JSON.stringify(value) });
+
+  it('patches one JSON text entry, and answers an empty patch for equal values', () => {
+    expect(patchBetween(json({ title: 'One', done: false }), json({ title: 'Two', done: false }))).toEqual({ title: 'Two' });
+    expect(patchBetween(json({ title: 'One' }), json({ title: 'One' }))).toEqual({});
+  });
+
+  it('goes whole for contents that are not one JSON text entry, or a value with a null member', () => {
+    const markdown = { uri, mimeType: 'text/markdown', text: '# One' };
+    const blob = { uri, mimeType: 'application/json', blob: btoa('{}') };
+    expect(patchBetween(markdown, { ...markdown, text: '# Two' })).toBeUndefined();
+    // JSON text under another type is not patched as JSON.
+    const plain = { uri, mimeType: 'text/plain', text: '{"title":"One"}' };
+    expect(patchBetween(plain, { ...plain, text: '{"title":"Two"}' })).toBeUndefined();
+    expect(patchBetween(json({ title: 'One' }), blob)).toBeUndefined();
+    expect(patchBetween(json({ title: 'One' }), { ...json({}), text: 'not json' })).toBeUndefined();
+    expect(patchBetween(json({ title: 'One' }), json({ title: 'One', due: null }))).toBeUndefined();
   });
 });
 
