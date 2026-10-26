@@ -64,7 +64,10 @@ export interface ResourceWebhookSubscribeResult extends Result {
   version?: string;
   /** That version deleted the resource. */
   deleted?: true;
-  /** For one resource, when `catchUp` is `full` and the client's version differs. */
+  /**
+   * For one resource, when the client's version differs and `catchUp` is `full`, or `patch` with
+   * no patch to send, as when the client named no version or the server no longer keeps it.
+   */
   contents?: ResourceContents[];
   /** For one resource, when `catchUp` is `patch`: the version the patch starts from, the client's. */
   fromVersion?: string;

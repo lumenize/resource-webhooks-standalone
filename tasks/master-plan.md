@@ -591,7 +591,7 @@ Run Scenario 10 again with A's cut-off window at 10 minutes, and say `a` deleted
   - **Checking it.** The token is signed with a key the Worker holds as a secret, with its `alg` pinned, names A's MCP endpoint as its audience, and carries the epoch it was issued in. `onBeforeRequest` checks its signature, expiry and audience at the edge, so a token that fails those checks never wakes A. A token from before a Wipe passes them, and A refuses it by its epoch. Neither check writes to storage.
 - **Endpoint verification is SEP-3415's, cached per `(principal, url)`.** A verifies by the handshake only, so a receiver gets deliveries only once it has shown it holds the secret. SEP-3415's other three paths, an allowlist, out-of-band verification and the receiver's well-known document, let a principal aim deliveries at a receiver that never held its secret, which `sep-notes.md` records as a gap to raise.
 
-#### The `patch` form, in a later phase
+#### The `patch` form
 
 For a resource whose contents are JSON, a delivery can carry an RFC 7396 merge patch in place of the whole value. The patch goes from the resource's previous version to its new one, and names both.
 
@@ -621,11 +621,11 @@ A serves its lists a second way for this phase, under a scheme of its own, as `l
 
 Everything about delivering a webhook is SEP-3415's. The extension adds a capability, two methods, their parameters and results, and the body a change delivers, written in the spec's style and built on `schema.ts`'s own types. The `patch` form adds a variant to `ResourceChange`, and a patch to the result, in its phase.
 
-A declares the extension in `server/discover`, which is how `b` learns that A offers `full` (R1):
+A declares the extension in `server/discover`, which is how `b` learns that A offers `full` and `patch` (R1):
 
 ```jsonc
 "capabilities": { "extensions": {
-  "io.modelcontextprotocol/resource-webhooks": { "forms": ["notify", "full"] } } }
+  "io.modelcontextprotocol/resource-webhooks": { "forms": ["notify", "full", "patch"] } } }
 ```
 
 ```ts
@@ -949,7 +949,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
    - **Builds:** `"patch"` in the capability's `forms`; the `mergePatch` variant of `ResourceChange` and of a result; patches on delivery and on catch-up, A computing them with a plain-JSON `diff` and `b` applying them with the copied `applyMergePatch` and `setOwn`, listed in `ATTRIBUTIONS.md`; the patch rules as R-numbers in `sep-notes.md`; and in § *Findings*, the bytes on the wire for each form, for a note and a list of 100 items
    - **Success criteria:**
      - When `v4` replaces a pending `v3` that was to patch from `v2`, the delivered patch starts from `v2`. Mutation: start it from `v3`.
-     - After `evictDurableObject(A)` drops the retry queue's entry, the patch starts from `v3`, and `b` catches up. Mutation: persist the starting version across eviction. Local only.
+     - After a restart of A drops the retry queue's entry, the patch starts from `v3`, and `b` catches up. The lane restarts A with `abortAllDurableObjects`, since `evictDurableObject` first lets the retries run to their end. Mutation: persist the starting version across the restart. Local only.
      - A catch-up with `catchUp: "patch"` patches from the version it names, and from one A has pruned it carries the full contents. Mutation: patch from the newest kept version.
      - In a collection's patch catch-up, a member whose patch starts from a version `b` does not hold is read again by `b`. Mutation: `b` refreshes with the cursor again.
      - A created resource, or one whose contents are not a single JSON text entry, goes `full`. Mutation: patch from nothing.
@@ -1259,14 +1259,23 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 
 **Retro.**
 
-- **Where a patch starts:** the queue keeps each slot's undelivered message, and a patch message carries the version it starts from, so a patch that replaces one asks the slot where that one started (R43). With no message waiting, as after a delivery got through or a restart dropped the queue, it starts from the resource's previous version, and a receiver that holds another catches up.
+- **Where a patch starts:** every level 2 message records the version the receiver is taken to hold before it, `null` for none, so a message that replaces one not yet delivered starts where that one did (R43). A creation records `null`, so an edit that replaces its waiting delivery goes `full`. When a delivery out at the time gets through while its replacement waits, the queue rebuilds the replacement from the version just delivered. With no message waiting, as after a delivery got through or a restart dropped the queue, a patch starts from the resource's previous version, and a receiver that holds another catches up.
+- **A delivers a write before it prunes,** so a resource left alone past the cut-off window still patches from the version its next write supersedes. A prune later can still drop a version a waiting message names, and that message then goes `full`.
 - **The store finds a version's row by its stamp, the row before a version, and a path's row at a cursor's stamp,** each only within the epoch, so a base version or an earlier epoch's version finds nothing and the change goes `full`.
-- **`Copies` applies a patch only to the version it starts from (R45).** Otherwise it refreshes one resource, naming the version it holds, and reads a collection's member again through a `read` callback, one read per member at a time, made again if a delivery for it crossed the read.
+- **`Copies` applies a patch only to the version it starts from (R45).** Otherwise it refreshes one resource, naming the version it holds, and reads a collection's member again through a `read` option, one read per member at a time, made again if a delivery for it crossed the read. After one patch it cannot apply, as for a version held without its contents, the next refresh names no version, so it gets the contents. A collection's patch it cannot apply with no `read` throws, and a refresh or read it made by itself that fails goes to `onError`.
 - **`copies.ts` imports the copied merge patch by its `.ts` path,** the only one Node's type stripping resolves. The Worker's tsconfig allows `.ts` imports, and the page's rewrites them to `.js` as it compiles.
 - **`applyMergePatch` and `setOwn` are copied from lumenize at `6689336`,** past the published 0.26.0, which predates their fix for `__proto__`, and ATTRIBUTIONS.md lists them. The `diff` beside them is this repo's own, for plain JSON, and answers `same`, one patch, or `full` for a value holding a `null` member.
 - **15 mutations, 13 caught by the test aimed at them on the first run.** The two that survived had fixtures in the safe shape: every non-JSON case also failed to parse, so the check on the type never decided, and the prune left no version at all, so patching from the newest kept one also fell back to the contents. Each test now has the dangerous shape.
+- **The verifier found four major issues and ten minor ones, all fixed or recorded:**
+  - `Copies` refreshed without end when it held a version without contents, since A answered each refresh naming it with a patch it could not apply.
+  - A patch that replaced a waiting `full` or `notify` started from the previous version, though the receiver never got the waiting one, so an edit after a creation patched from a version the receiver never had.
+  - A delivery whose POST was out when its replacement was built counted as never delivered, so a burst of writes within one round trip cost `b` a refresh. The queue now rebuilds the replacement from it.
+  - A patch had no size bound, though an array's patch carries the whole array.
+  - Minor ones: a write's previous version was pruned before the write was delivered; a collection with no `read` quietly refreshed by its cursor, the criterion's own mutation; background refreshes and reads could reject unhandled; an unsubscribe's POST still out was read as the new subscription's; R42 and R44 named cases the code treats otherwise, nulls inside arrays and members re-created after the cursor; and the plan's heading, capability example and restart criterion lagged the build.
+  - Accepted: a page of a catch-up after the first patches from the previous page's cursor, so a member written between the two cursors and again later is read again needlessly. `#readAgain` compares no versions, since versions sort in no order, and A's reads are never cached. The generated schema's `JSONValue` names `integer` rather than `number`, as the spec's own does, and nothing validates a delivery against it.
+- **Eight more mutations against the verifier's fixes, all caught by the test aimed at them.** One first ran for 8 hours 45 minutes, unnoticed: it replaced the throw for a collection with no `read` by a refresh, which the unit test's scripted refresh answered at once with the same patch, so the refresh looped in microtasks inside workerd, where `--testTimeout` cannot reach. The scripted refresh now refuses after three calls, so that mutation fails in milliseconds, and every mutation run now has a wall-clock limit of its own.
 - **Unexercised:** a delivery crossing `Copies`' re-read of a member, which reads again, as a crossing refresh does.
-- **The full suite passes, 376 tests, 50 more than phase 8 left,** both type-checks pass, both conformance gates still exit 0 at their baselines, and the deployed tier passes its six files on a fresh deploy. The role modules' import check now allows the merge patch, which touches no platform type.
+- **The full suite passes, 384 tests, 58 more than phase 8 left,** both type-checks pass, both conformance gates still exit 0 at their baselines, and the deployed tier passes its six files on a fresh deploy. The role modules' import check now allows the merge patch, which touches no platform type.
 
 **Close-out.**
 

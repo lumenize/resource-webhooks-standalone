@@ -64,8 +64,18 @@ export interface Message {
   body: string;
   /** When the subscription's grant ends, as an ISO string, after which no attempt is made. */
   until?: string;
-  /** For a merge patch, the version it starts from, which a message replacing this one keeps. */
-  patchFrom?: string;
+  /** The version the message delivers, for a body that depends on what the receiver holds. */
+  version?: string;
+  /**
+   * The version the receiver is taken to hold before this message, `null` for none, which a
+   * message replacing this one keeps, since the receiver never gets this one.
+   */
+  heldBefore?: string | null;
+  /**
+   * The same message, built again for a receiver that holds `held`, as a patch is. The queue calls
+   * it when the message before it in the slot got through while it waited.
+   */
+  rebuild?: (held: string) => Message;
 }
 
 // SEP-3415 asks for 3 to 5 attempts over no more than 10 to 15 minutes. The window stops short of
@@ -151,17 +161,21 @@ export class Deliveries {
     if (generation === this.#generation) this.#verified.set(key, Date.now() + this.#options.verificationTtlMs);
   }
 
-  /** Delivers `message` in `slot`, retrying on A's schedule, unless a newer one replaces it. */
   /**
-   * Where a patch for the slot starts, while one not yet delivered holds it: the newest message
-   * waiting, or the one being delivered. A message that replaces it never reaches the receiver
-   * before it, so the receiver holds what the replaced one patched from.
+   * What the receiver is taken to hold for the slot while a message not yet delivered is in it,
+   * the newest waiting or the one being delivered, or undefined when none is. A message that
+   * replaces that one never reaches the receiver before it, and if the one being delivered gets
+   * through first, the queue rebuilds its replacement.
    */
-  startOf(slot: string): string | undefined {
+  heldBefore(slot: string): string | null | undefined {
     const state = this.#slots.get(slot);
-    return (state?.pending ?? state?.current)?.patchFrom;
+    if (!state) return undefined;
+    // An unsubscribe's POST still out belongs to the subscription that ended.
+    if (state.cancelled) return state.pending?.heldBefore;
+    return (state.pending ?? state.current).heldBefore;
   }
 
+  /** Delivers `message` in `slot`, retrying on A's schedule, unless a newer one replaces it. */
   enqueue(slot: string, message: Message): void {
     const existing = this.#slots.get(slot);
     if (existing) {
@@ -209,6 +223,7 @@ export class Deliveries {
 
   async #deliver(slot: string, state: Slot, message: Message): Promise<void> {
     const delays = this.#options.schedule();
+    let delivered = false;
     for (let attempt = 1; ; attempt++) {
       // A subscription whose grant lapsed gets no more attempts.
       if (message.until !== undefined && message.until < new Date().toISOString()) break;
@@ -220,7 +235,8 @@ export class Deliveries {
       const outcome = 'failure' in result ? result.failure : String(result.status);
       this.#options.report?.({ kind: 'attempt', url: message.url, webhookId: message.webhookId, attempt, outcome });
       // 410 and 413 refuse this message for good, without ending the subscription.
-      const settled = !('failure' in result) && ((result.status >= 200 && result.status < 300) || result.status === 410 || result.status === 413);
+      delivered = !('failure' in result) && result.status >= 200 && result.status < 300;
+      const settled = delivered || (!('failure' in result) && (result.status === 410 || result.status === 413));
       if (state.cancelled || settled || state.pending || attempt > delays.length) break;
       await this.#wait(state, delays[attempt - 1]);
       if (state.cancelled || state.pending) break;
@@ -229,7 +245,8 @@ export class Deliveries {
     if (this.#slots.get(slot) !== state) return;
     const next = state.pending;
     this.#slots.delete(slot);
-    if (next) this.#start(slot, next);
+    // A message that waited while this one got through was built for a receiver without it.
+    if (next) this.#start(slot, delivered && message.version !== undefined && next.rebuild ? next.rebuild(message.version) : next);
   }
 
   #wait(state: Slot, ms: number): Promise<void> {

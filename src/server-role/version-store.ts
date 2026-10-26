@@ -234,7 +234,8 @@ export class VersionStore {
   }
 
   // The insert comes before the prune, in one synchronous block, so a pruned top row never
-  // lends its rowid, and so its version, to the next write.
+  // lends its rowid, and so its version, to the next write. The write is delivered before the
+  // prune too, so a patch can start from the version the write supersedes, however old.
   #add(path: string, contents: string | null): string {
     const now = new Date();
     const { stamp } = this.#sql
@@ -246,9 +247,9 @@ export class VersionStore {
         now.toISOString(),
       )
       .one();
-    this.#prune(now);
     const version = this.#version(stamp);
     this.#onWrite?.(path, version, contents === null);
+    this.#prune(now);
     return version;
   }
 

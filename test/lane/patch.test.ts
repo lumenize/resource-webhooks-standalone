@@ -19,19 +19,30 @@ async function parties(): Promise<{ lane: Lane; a: Party; b: Party; uri: string 
   return { lane, a: await signedIn(lane, 'a'), b: await signedIn(lane, 'b'), uri: `${lane.root}/notes/inbox/note-1` };
 }
 
-/** A receiver that answers each delivery with whatever status the test last set. */
+/** A receiver that answers each delivery with whatever status the test last set, once `hold` lets it. */
 function switchable() {
   let status = 200;
-  const endpoint = receiver({ deliveries: () => new Response(null, { status }) });
-  return { endpoint, answer: (next: number) => (status = next) };
+  let hold: Promise<void> = Promise.resolve();
+  const endpoint = receiver({
+    deliveries: async () => {
+      await hold;
+      return new Response(null, { status });
+    },
+  });
+  return { endpoint, answer: (next: number) => (status = next), holdUntil: (gate: Promise<void>) => (hold = gate) };
+}
+
+/** Sets A's retries to a second apart, so a test can write while a delivery waits. */
+async function slowRetries(lane: Lane): Promise<void> {
+  const page = await watch(lane, 'A');
+  expect(await page.control('schedule', { delaysMs: [1000, 1000, 1000] })).toMatchObject({ type: 'done' });
 }
 
 describe('a patch delivery', () => {
   it('starts from the version before it, and one that replaces a pending delivery starts where that one did', async () => {
     const { lane, a, b, uri } = await parties();
     // Retries a second apart, so v4 surely replaces v3 while v3 waits.
-    const page = await watch(lane, 'A');
-    expect(await page.control('schedule', { delaysMs: [1000, 1000, 1000] })).toMatchObject({ type: 'done' });
+    await slowRetries(lane);
     const { endpoint, answer } = switchable();
     const v1 = await write(a, uri, 'One');
     await subscribeTarget(b, { uri }, endpoint.url(), newSecret(), { form: 'patch' });
@@ -52,7 +63,8 @@ describe('a patch delivery', () => {
   });
 
   it("starts from the version before it once a restart of A drops the pending delivery, and b catches up", async () => {
-    const { a, b, uri } = await parties();
+    const { lane, a, b, uri } = await parties();
+    await slowRetries(lane);
     const { endpoint, answer } = switchable();
     const secret = newSecret();
     await write(a, uri, 'One');
@@ -75,6 +87,96 @@ describe('a patch delivery', () => {
     // b holds v2, so it cannot apply the patch, and refreshes, naming v2.
     copies.deliver(four);
     await vi.waitFor(() => expect(copies.get(uri)).toEqual({ version: v4, deleted: false, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Four', true)) }] }));
+  });
+
+  it('starts from the version a delivery just got through with, when it waited while that one was out', async () => {
+    const { a, b, uri } = await parties();
+    const { endpoint, holdUntil } = switchable();
+    const v1 = await write(a, uri, 'One');
+    await subscribeTarget(b, { uri }, endpoint.url(), newSecret(), { form: 'patch' });
+    let release!: () => void;
+    holdUntil(new Promise<void>((resolve) => (release = resolve)));
+    const v2 = await write(a, uri, 'Two', true);
+    // v2's POST is out, held by the receiver, while v3 is written, and then it gets through.
+    await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(1));
+    const v3 = await write(a, uri, 'Three', true);
+    release();
+    await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(2));
+    expect(endpoint.deliveries().map(body)).toEqual([
+      { uri, form: 'patch', version: v2, fromVersion: v1, mergePatch: { title: 'Two', done: true } },
+      { uri, form: 'patch', version: v3, fromVersion: v2, mergePatch: { title: 'Three' } },
+    ]);
+  });
+
+  it("starts from what a new subscription's result gave b, not from a POST its unsubscribe left out", async () => {
+    const { a, b, uri } = await parties();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    // The first delivery is held, then refused, so the queue has nothing to rebuild from.
+    const endpoint = receiver({
+      deliveries: async (_received, index) => {
+        if (index > 0) return new Response(null, { status: 200 });
+        await gate;
+        return new Response(null, { status: 503 });
+      },
+    });
+    const secret = newSecret();
+    await write(a, uri, 'One');
+    await subscribeTarget(b, { uri }, endpoint.url(), secret, { form: 'patch' });
+    await write(a, uri, 'Two');
+    await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(1));
+    await b.client.request('resources/webhooks/unsubscribe', { uri, delivery: { url: endpoint.url() } });
+    // b subscribes again, and its result brings v2 whole, while v2's old POST is still out.
+    const again = await subscribeTarget(b, { uri }, endpoint.url(), secret, { form: 'patch', catchUp: 'full' });
+    const v2 = again.version!;
+    const v3 = await write(a, uri, 'Three');
+    release();
+    await vi.waitFor(() => expect(endpoint.deliveries().map(body).find(({ version }) => version === v3)).toMatchObject({ form: 'patch', fromVersion: v2 }));
+  });
+
+  it('goes full for an edit that replaces the waiting delivery of the resource it created', async () => {
+    const { lane, a, b } = await parties();
+    await slowRetries(lane);
+    const { endpoint, answer } = switchable();
+    await subscribeTarget(b, { uri: `${lane.root}/notes/inbox` }, endpoint.url(), newSecret(), { form: 'patch' });
+    answer(503);
+    const uri = `${lane.root}/notes/inbox/note-9`;
+    await write(a, uri, 'New');
+    await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(1));
+    const v2 = await write(a, uri, 'Newer');
+    answer(200);
+    // The receiver never got the creation, so the edit cannot patch from it.
+    await vi.waitFor(() => expect(endpoint.deliveries().map(body).find(({ version }) => version === v2)).toEqual({ uri, form: 'full', version: v2, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Newer')) }] }), { timeout: 5000 });
+  });
+
+  it('patches an edit to a resource left alone past the cut-off window, from the version it supersedes', async () => {
+    const { a, b, uri } = await parties();
+    const { endpoint } = switchable();
+    const v1 = await write(a, uri, 'One');
+    await subscribeTarget(b, { uri }, endpoint.url(), newSecret(), { form: 'patch' });
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+    try {
+      vi.setSystemTime(Date.now() + Number(env.CUTOFF_WINDOW_MS) + 1000);
+      const v2 = await write(a, uri, 'Two');
+      await vi.waitFor(() => expect(endpoint.deliveries().map(body)).toEqual([{ uri, form: 'patch', version: v2, fromVersion: v1, mergePatch: { title: 'Two' } }]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("goes notify for a patch past SEP-3415's delivery profile, as full does", async () => {
+    const { lane, a, b } = await parties();
+    const { endpoint } = switchable();
+    const path = '/lists/list-big';
+    const uri = `${lane.root}${path}`;
+    // 300 KB of items, so a patch carrying the array passes 256 KiB.
+    const items = Array.from({ length: 3000 }, (_, index) => `item ${index} ${'x'.repeat(90)}`);
+    const put = async (list: { title: string; items: string[] }) => expect((await lane.fetch(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(list) })).status).toBeLessThan(300);
+    await put({ title: 'Big', items });
+    await subscribeTarget(b, { uri }, endpoint.url(), newSecret(), { form: 'patch' });
+    await put({ title: 'Big', items: items.map((item, index) => (index === 0 ? 'changed' : item)) });
+    await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(1));
+    expect(body(endpoint.deliveries()[0])).toEqual({ uri, form: 'notify', version: expect.any(String) });
   });
 
   it('goes full for a resource the change created', async () => {
@@ -111,6 +213,29 @@ describe('a patch catch-up', () => {
     }
   });
 
+  it('ends, holding a version without its contents, after one more refresh that names none', async () => {
+    const { a, b, uri } = await parties();
+    const { endpoint } = switchable();
+    const secret = newSecret();
+    await write(a, uri, 'One');
+    const named: (string | undefined)[] = [];
+    const copies = new Copies(async (target, { version }) => {
+      named.push(version);
+      if (named.length > 5) throw new Error('refreshed without end');
+      return subscribeTarget(b, target, endpoint.url(), secret, { catchUp: 'patch', ...(version ? { version } : {}) });
+    });
+    await copies.refresh({ uri });
+    // A notify delivery leaves b holding v2 without its contents, so no patch from v2 applies.
+    const v2 = await write(a, uri, 'Two');
+    await vi.waitFor(() => expect(endpoint.deliveries()).toHaveLength(1));
+    copies.deliver(body(endpoint.deliveries()[0]));
+    expect(copies.get(uri)).toEqual({ version: v2, deleted: false });
+    const v3 = await write(a, uri, 'Three');
+    await copies.refresh({ uri });
+    expect(named).toEqual([undefined, v2, undefined]);
+    expect(copies.get(uri)).toEqual({ version: v3, deleted: false, contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(note('Three')) }] });
+  });
+
   it('is applied by b to the version it named', async () => {
     const { a, b, uri } = await parties();
     const { endpoint } = switchable();
@@ -138,10 +263,12 @@ describe('a patch catch-up', () => {
         refreshes.push(cursor);
         return subscribeTarget(b, target, endpoint.url(), secret, { form: 'patch', catchUp: 'patch', ...(cursor ? { cursor } : {}) }) as Promise<ResourceWebhookSubscribeResult>;
       },
-      async (member): Promise<Copy> => {
-        reads.push(member);
-        const response = await lane.send(new Request(member));
-        return { version: response.headers.get('ETag')!.slice(1, -1), deleted: false, contents: [{ uri: member, mimeType: 'application/json', text: await response.text() }] };
+      {
+        read: async (member): Promise<Copy> => {
+          reads.push(member);
+          const response = await lane.send(new Request(member));
+          return { version: response.headers.get('ETag')!.slice(1, -1), deleted: false, contents: [{ uri: member, mimeType: 'application/json', text: await response.text() }] };
+        },
       },
     );
     // A listing from nothing carries note-1 whole, and its cursor stands at v1.

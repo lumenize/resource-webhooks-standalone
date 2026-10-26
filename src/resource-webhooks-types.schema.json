@@ -648,7 +648,7 @@
                     "type": "array"
                 },
                 "contents": {
-                    "description": "For one resource, when `catchUp` is `full` and the client's version differs.",
+                    "description": "For one resource, when the client's version differs and `catchUp` is `full`, or `patch` with\nno patch to send, as when the client named no version or the server no longer keeps it.",
                     "items": {
                         "$ref": "#/$defs/ResourceContents"
                     },

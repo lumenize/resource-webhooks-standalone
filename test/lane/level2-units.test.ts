@@ -1,7 +1,7 @@
 // Three pieces of level 2 below the public API, since none shows through A's routes: the id's
 // keyed hash, whose key a test cannot vary in A, the page size A refuses to start with, and b's
 // copies, which live in the client.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Copies, type Held } from '../../src/client/copies';
 import type { ResourceChange, ResourceWebhookSubscribeResult } from '../../src/resource-webhooks-types';
 import { declared, patchBetween, ResourceWebhooks, type ResourceWebhooksOptions } from '../../src/server-role/resource-webhooks';
@@ -134,6 +134,29 @@ describe("b's copies", () => {
     await script.copies().refresh({ uri });
     expect(script.calls.map((held) => held.cursor)).toEqual([undefined, 'c1', 'c2']);
     expect(script.copies().get(`${uri}/note-1`)?.version).toBe('v2');
+  });
+
+  it("refuses a collection's patch it cannot apply without a read, rather than leave the member stale", async () => {
+    let calls = 0;
+    const copies = new Copies(async () => {
+      // Bounded, since refreshing instead would get the same patch and refresh again without end.
+      if (++calls > 3) throw new Error('refreshed without end');
+      return result({ changes: [{ uri: `${uri}/note-1`, form: 'patch', version: 'v2', fromVersion: 'v1', mergePatch: { title: 'Two' } }], cursor: 'c1' });
+    });
+    await expect(copies.refresh({ uri })).rejects.toThrow('needs `read`');
+    expect(calls).toBe(1);
+  });
+
+  it("tells onError of a member's read again that failed", async () => {
+    const failures: unknown[] = [];
+    const copies = new Copies(async () => result({ changes: [{ uri: `${uri}/note-1`, form: 'patch', version: 'v2', fromVersion: 'v1', mergePatch: { title: 'Two' } }], cursor: 'c1' }), {
+      read: async () => {
+        throw new Error('the read failed');
+      },
+      onError: (error) => failures.push(error),
+    });
+    await copies.refresh({ uri });
+    await vi.waitFor(() => expect(failures).toEqual([new Error('the read failed')]));
   });
 
   it('finishes a reset that a failed refresh left partway, dropping only what no page of it listed', async () => {

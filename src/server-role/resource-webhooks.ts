@@ -17,7 +17,7 @@ import type {
 } from '../resource-webhooks-types';
 import { diff, type JsonValue } from '../vendor/lumenize-merge-patch/merge-patch';
 import { INVALID_PARAMS, type JSONValue, type Result } from '../vendor/mcp-spec/2026-07-28/schema';
-import { randomId, type Deliveries } from './deliveries';
+import { randomId, type Deliveries, type Message } from './deliveries';
 import { coveringTargets, type Subscription, type SubscriptionKey, type Subscriptions } from './subscriptions';
 import { parseTarget } from './targets';
 import { templateMatcher } from './uri-templates';
@@ -101,43 +101,53 @@ export class ResourceWebhooks {
    * own form. A deletion goes in the `notify` form whatever the subscription's (R11).
    */
   notify(path: string, version: string, deleted: boolean): void {
-    const { root, store, deliveries, subscriptions, contentsOf } = this.#options;
+    const { root, store, deliveries } = this.#options;
     const uri = `${root}${path}`;
-    const notify: ResourceChange = deleted ? { uri, form: 'notify', version, deleted: true } : { uri, form: 'notify', version };
-    let full: string | undefined;
-    const bodyFor = (form: string | null): string => {
-      if (deleted || form !== 'full') return JSON.stringify(notify);
-      if (full === undefined) {
-        const current = store.current(path) as { contents: string };
-        const change: ResourceChange = { uri, form: 'full', version, contents: [contentsOf(path, current.contents)] };
-        full = JSON.stringify(change);
-        if (new TextEncoder().encode(full).length > FULL_BODY_LIMIT) full = JSON.stringify(notify);
-      }
-      return full;
-    };
+    // The receiver is taken to hold the previous version, unless a delivery it never got waits.
+    const previous = store.before(path, version)?.version ?? null;
+    const bodies = new Map<string, string>();
     for (const row of this.#covering(path, uri)) {
       // A new message for each version, with its own webhook-id, kept across that version's retries (R14).
       const webhookId = `msg_${randomId(24)}`;
       const slot = `${row.id}\n${uri}`;
-      const patch = row.form === 'patch' && !deleted ? this.#patchFor(slot, path, uri, version) : undefined;
-      const message = { url: row.url, secret: row.secret, subscriptionId: row.id, webhookId, until: row.expiresAt };
-      deliveries.enqueue(slot, patch ? { ...message, body: patch.body, patchFrom: patch.from } : { ...message, body: bodyFor(row.form === 'patch' ? 'full' : row.form) });
+      const waiting = deliveries.heldBefore(slot);
+      const message = { url: row.url, secret: row.secret, subscriptionId: row.id, webhookId, until: row.expiresAt, version };
+      const build = (heldBefore: string | null): Message => {
+        const body = deleted || row.form !== 'patch' ? this.#body(bodies, path, uri, version, deleted, row.form) : this.#patchBody(bodies, path, uri, version, heldBefore);
+        return { ...message, body, heldBefore, ...(row.form === 'patch' && !deleted ? { rebuild: (held: string) => build(held) } : {}) };
+      };
+      deliveries.enqueue(slot, build(waiting === undefined ? previous : waiting));
     }
   }
 
-  // A delivery's patch: from where the delivery it replaces started, while one waits in the queue,
-  // since the receiver never got it, or else from the previous version (R43). Undefined when no
-  // patch can start there, as for a created resource, and the delivery goes full.
-  #patchFor(slot: string, path: string, uri: string, version: string): { body: string; from: string } | undefined {
-    const { store, deliveries, contentsOf } = this.#options;
-    const current = store.current(path) as { contents: string };
-    const start = deliveries.startOf(slot);
-    const from = start !== undefined ? store.at(path, start) : store.before(path, version);
-    if (!from || from.deleted) return undefined;
-    const patch = patchBetween(contentsOf(path, from.contents), contentsOf(path, current.contents));
-    if (patch === undefined) return undefined;
-    const change: ResourceChange = { uri, form: 'patch', version, fromVersion: from.version, mergePatch: patch };
-    return { body: JSON.stringify(change), from: from.version };
+  // A change's body in the notify or full form, built once per write for every subscription. A full
+  // body past SEP-3415's delivery profile goes as notify instead (R27).
+  #body(bodies: Map<string, string>, path: string, uri: string, version: string, deleted: boolean, form: string | null): string {
+    const key = deleted || form !== 'full' ? 'notify' : 'full';
+    let body = bodies.get(key);
+    if (body !== undefined) return body;
+    const notify: ResourceChange = deleted ? { uri, form: 'notify', version, deleted: true } : { uri, form: 'notify', version };
+    if (key === 'full') {
+      const current = this.#options.store.at(path, version) as { contents: string };
+      body = JSON.stringify({ uri, form: 'full', version, contents: [this.#options.contentsOf(path, current.contents)] } satisfies ResourceChange);
+      if (new TextEncoder().encode(body).length > FULL_BODY_LIMIT) body = JSON.stringify(notify);
+    } else {
+      body = JSON.stringify(notify);
+    }
+    bodies.set(key, body);
+    return body;
+  }
+
+  // A patch from the version the receiver holds, or the full form when no patch can start there,
+  // as for a resource it never had, or when the patch would pass the delivery profile (R43, R27).
+  #patchBody(bodies: Map<string, string>, path: string, uri: string, version: string, heldBefore: string | null): string {
+    const { store, contentsOf } = this.#options;
+    const from = heldBefore === null ? undefined : store.at(path, heldBefore);
+    const current = store.at(path, version);
+    const patch = from && !from.deleted && current && !current.deleted ? patchBetween(contentsOf(path, from.contents), contentsOf(path, current.contents)) : undefined;
+    if (patch === undefined) return this.#body(bodies, path, uri, version, false, 'full');
+    const body = JSON.stringify({ uri, form: 'patch', version, fromVersion: heldBefore!, mergePatch: patch } satisfies ResourceChange);
+    return new TextEncoder().encode(body).length > FULL_BODY_LIMIT ? this.#body(bodies, path, uri, version, false, 'notify') : body;
   }
 
   // Every live or lapsed subscription covering a write at `path`: a uri naming it or a folder above
