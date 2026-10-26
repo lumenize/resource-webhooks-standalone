@@ -55,4 +55,4 @@ Linked from lumenize: `/write-task`, `/review-task`, `/build-task` and `/refacto
 
 In a sibling fork, follow that repo's own CLAUDE.md and tooling. The TypeScript SDK uses pnpm, and `critical.md`'s npm-only rule is for repos Larry owns, not for upstream forks.
 
-This repo has no remote yet. Its remote will be the public `lumenize/resource-webhooks-standalone`, created when Larry asks. Pushing publishes, so push only when Larry asks.
+This repo's remote is the public `lumenize/resource-webhooks-standalone`. Pushing publishes, so push only when Larry asks.
