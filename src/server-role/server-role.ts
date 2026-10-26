@@ -32,7 +32,7 @@ import type { DeleteNoteArguments, NoteVersion, WriteNoteArguments } from '../to
 import { clampSchedule, Deliveries, type DeliveryReport, type Send } from './deliveries';
 import { Events } from './events';
 import { ResourceWebhooks } from './resource-webhooks';
-import { Subscriptions } from './subscriptions';
+import { Subscriptions, type Subscription } from './subscriptions';
 import { parseTarget, TYPES, type Target } from './targets';
 import { requestErrors, toolErrors, toolSchemaFor } from './validation';
 import { VersionStore } from './version-store';
@@ -188,6 +188,14 @@ export class ServerRole {
     if (errors.length > 0) throw new JsonRpcError(INVALID_PARAMS, 'Invalid params', errors.slice(0, 10));
     const result = await method(request.params ?? {}, principal);
     return { ...result, _meta: { 'io.modelcontextprotocol/serverInfo': SERVER_INFO, ...result._meta } };
+  }
+
+  /** What A holds, for the page: each resource's newest version, and each subscription. */
+  holdings(): { notes: { uri: string; version: string; deleted: boolean }[]; subscriptions: Omit<Subscription, 'secret'>[] } {
+    return {
+      notes: this.store.held().map(({ path, version, deleted }) => ({ uri: `${this.#root}${path}`, version, deleted })),
+      subscriptions: this.#subscriptions.held(),
+    };
   }
 
   /**

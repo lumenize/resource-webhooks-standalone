@@ -57,7 +57,7 @@ export class Server extends DurableObject<Env> {
       extras: (new.target as typeof Server).extras,
       send,
       waitUntil: (promise) => ctx.waitUntil(promise),
-      retrySchedule: () => (ctx.storage.kv.get('retrySchedule') as number[] | undefined) ?? env.RETRY_SCHEDULE_MS.split(',').map(Number),
+      retrySchedule: () => this.#schedule(),
       verificationBurst: Number(env.VERIFICATION_BURST),
       pageSize: Number(env.PAGE_SIZE),
       subscriptionIdKey: env.SUBSCRIPTION_ID_KEY,
@@ -75,8 +75,28 @@ export class Server extends DurableObject<Env> {
     });
   }
 
+  /**
+   * Answers a request, and tells the page what it did: an MCP exchange as serveMcp reports it, any
+   * other as its method, path, status and ETag, never a body, and then what A holds.
+   */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const path = url.pathname.slice(this.#base.length);
+    if (path === '/page') {
+      const accepted = acceptPage(this.ctx, 'A', this.env.VERSION);
+      this.#reportHoldings();
+      return accepted;
+    }
+    const response = await this.#answer(request, url, path);
+    if (path !== '/mcp' || response.status === 401) {
+      const etag = response.headers.get('ETag');
+      report(this.ctx, 'A', { kind: 'http', method: request.method, path: url.pathname, status: response.status, ...(etag ? { etag } : {}) });
+    }
+    this.#reportHoldings();
+    return response;
+  }
+
+  async #answer(request: Request, url: URL, path: string): Promise<Response> {
     switch (url.pathname) {
       case '/register':
         return this.#authorization.register(request);
@@ -85,8 +105,6 @@ export class Server extends DurableObject<Env> {
       case '/token':
         return this.#authorization.token(request);
     }
-    const path = url.pathname.slice(this.#base.length);
-    if (path === '/page') return acceptPage(this.ctx, 'A', this.env.VERSION);
     const needsToken = path === '/mcp' || request.method === 'PUT' || request.method === 'DELETE';
     let claims: Claims | undefined;
     if (needsToken) {
@@ -124,6 +142,18 @@ export class Server extends DurableObject<Env> {
     } else {
       socket.send(JSON.stringify({ type: 'unknown', action: control.action }));
     }
+    this.#reportHoldings();
+  }
+
+  // The schedule A retries on: the page's, if it set one, or RETRY_SCHEDULE_MS.
+  #schedule(): number[] {
+    return (this.ctx.storage.kv.get('retrySchedule') as number[] | undefined) ?? this.env.RETRY_SCHEDULE_MS.split(',').map(Number);
+  }
+
+  // What A holds, to every page listening, and nothing computed when none is.
+  #reportHoldings(): void {
+    if (this.ctx.getWebSockets(PAGE_TAG).length === 0) return;
+    report(this.ctx, 'A', { kind: 'holdings', ...this.#role.holdings(), schedule: this.#schedule() });
   }
 
   // The edge verified the token, but only A knows its epoch, so a token from before a Wipe is

@@ -167,7 +167,7 @@ export async function listen(tier: Tier, party: Party, { secret = newSecret(), t
     socket.send(JSON.stringify({ secret: next }));
     // b subscribes only once B has stored its secret, since A's challenge reaches B first.
     await vi.waitFor(
-      () => expect(messages.slice(before).find(({ type }) => type === 'secret-registered' || type === 'secret-refused')).toEqual({ type: 'secret-registered' }),
+      () => expect(messages.slice(before).find(({ type }) => type === 'secret-registered' || type === 'secret-refused')).toEqual({ type: 'secret-registered', heartbeatMs: tier.heartbeatMs }),
       NETWORK_WAIT,
     );
   };

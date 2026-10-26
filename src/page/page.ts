@@ -1,10 +1,10 @@
 // The demo page: four boxes, for the writer `a`, the server A, the gateway B and the client `b`.
 // `a` and `b` run here, on the same client modules the tests use, so their boxes are their own
-// records. A and B run on Cloudflare and report to the page over a back channel each, which
-// feeds their boxes. Every value is shown as text, never parsed as HTML. The operator token
-// is typed in and kept in sessionStorage, and never goes in a URL. The page's staging beyond the
-// mechanics waits for rehearsal.
-import { Copies, type Target } from '../client/copies.js';
+// records. A and B run on Cloudflare and report to the page over a back channel each: every
+// message they send and receive, and what they hold after each change. Every value is shown as
+// text, never parsed as HTML. The operator token is typed in and kept in sessionStorage, and
+// never goes in a URL. The page's staging beyond the mechanics waits for rehearsal.
+import { Copies } from '../client/copies.js';
 import { createMcpClient, OAuthError, OAuthSession, type McpClient } from '../client/mcp-client.js';
 import type { ResourceChange, ResourceWebhookSubscribeResult } from '../resource-webhooks-types.js';
 import { newSecret } from '../standard-webhooks.js';
@@ -17,6 +17,9 @@ const SERVER = 'A';
 const GATEWAY = 'B';
 const ROOT = `${ORIGIN}/server/${SERVER}`;
 const OPERATOR_TOKEN_KEY = 'operator-token';
+// How long a control waits for its answer, and the longest wait before a back channel reconnects.
+const ANSWER_MS = 10_000;
+const RECONNECT_MAX_MS = 10_000;
 
 function element<T extends HTMLElement>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -45,13 +48,6 @@ function hold(party: Party, lines: string[]): void {
   );
 }
 
-function clearBoxes(): void {
-  for (const party of ['a', 'A', 'B', 'b'] as const) {
-    element(`[data-party="${party}"] .messages`).replaceChildren();
-    hold(party, []);
-  }
-}
-
 // A and B report every message whole, so a box shows the start of each. A client's own results
 // are shown at greater length, since a catch-up's changes are what a beat is about.
 function short(value: unknown, limit = 400): string {
@@ -61,48 +57,25 @@ function short(value: unknown, limit = 400): string {
 
 const LONG = 2000;
 
-// A and B: what each back channel reports, and what the page reads off it as each one's holdings.
+// A and B: their reports, and what each says it holds.
 
-interface BackChannel {
-  control(action: string, extra?: Message): Promise<Message>;
+interface Holdings {
+  notes?: { uri: string; version: string; deleted: boolean }[];
+  subscriptions?: { id: string; targetKind: string; target: string; form: string | null; expiresAt: string }[];
+  schedule?: number[];
+  sockets?: { client: string; connectedAt: string; secret?: string }[];
 }
 
-const serverHoldings = { notes: new Map<string, string>(), subscriptions: new Map<string, string>() };
-const gatewayHoldings = { sockets: new Set<string>(), secrets: new Map<string, string>() };
-let heartbeatMs = 30_000;
-
-function showServer(): void {
-  hold('A', [
-    ...[...serverHoldings.notes].map(([uri, version]) => `note ${uri} at ${version}`),
-    ...[...serverHoldings.subscriptions].map(([id, target]) => `subscription ${id} to ${target}`),
-  ]);
-}
-
-function showGateway(): void {
-  hold('B', [...[...gatewayHoldings.sockets].map((client) => `socket for ${client}`), ...[...gatewayHoldings.secrets].map(([client, secret]) => `secret for ${client}: ${secret}`)]);
-}
-
-// A reports each MCP exchange, so its notes and subscriptions are read off the answers.
-function readServer(report: Message): void {
-  if (report.kind !== 'mcp' || report.error) return;
-  const params = (report.params ?? {}) as Message;
-  const result = (report.result ?? {}) as Message;
-  if (report.method === 'tools/call') {
-    const uri = (params.arguments as Message | undefined)?.uri as string | undefined;
-    const version = (result.structuredContent as Message | undefined)?.version as string | undefined;
-    if (uri && version) serverHoldings.notes.set(uri, params.name === 'delete_note' ? `${version}, deleted` : version);
+function showHoldings(party: 'A' | 'B', holdings: Holdings): void {
+  if (party === 'A') {
+    hold('A', [
+      ...(holdings.notes ?? []).map(({ uri, version, deleted }) => `note ${uri} at ${version}${deleted ? ', deleted' : ''}`),
+      ...(holdings.subscriptions ?? []).map(({ id, targetKind, target, form, expiresAt }) => `subscription ${id} to ${targetKind === 'listed' ? 'listed' : target}${form ? `, ${form}` : ''}, until ${expiresAt}`),
+      `retry delays ${(holdings.schedule ?? []).join(', ')} ms`,
+    ]);
+  } else {
+    hold('B', (holdings.sockets ?? []).flatMap(({ client, secret }) => [`socket for ${client}`, ...(secret ? [`secret for ${client}: ${secret}`] : [])]));
   }
-  if ((report.method === 'events/subscribe' || report.method === 'resources/webhooks/subscribe') && typeof result.id === 'string') {
-    const target = params.uri ?? params.uriTemplate ?? (params.listed ? 'listed' : undefined) ?? (params.arguments as Message | undefined)?.uri;
-    serverHoldings.subscriptions.set(result.id, `${target}, until ${result.refreshBefore ?? 'cancelled'}`);
-  }
-  showServer();
-}
-
-function readGateway(report: Message): void {
-  if (report.kind === 'connected') gatewayHoldings.sockets.add(report.client as string);
-  if (report.kind === 'secret-registered') gatewayHoldings.secrets.set(report.client as string, report.secret as string);
-  showGateway();
 }
 
 function describe(report: Message): string {
@@ -110,32 +83,51 @@ function describe(report: Message): string {
   return `${kind}${method ? ` ${method}` : ''} ${short(rest)}`;
 }
 
+interface BackChannel {
+  control(action: string, extra?: Message): Promise<Message>;
+}
+
+/** A back channel that reconnects when it drops, as a redeploy or a runtime reset drops it. */
 function backChannel(party: 'A' | 'B'): BackChannel {
   const path = party === 'A' ? `/server/${SERVER}/page` : `/gateway/${GATEWAY}/page`;
-  const socket = new WebSocket(`${ORIGIN.replace(/^http/, 'ws')}${path}`);
-  const opened = new Promise<void>((resolve) => socket.addEventListener('open', () => resolve()));
-  const answers: ((message: Message) => boolean)[] = [];
-  socket.addEventListener('message', (event) => {
-    const message = JSON.parse(event.data as string) as Message;
-    if (message.party === party) {
-      if (message.kind === 'hello' && typeof message.heartbeatMs === 'number') heartbeatMs = message.heartbeatMs;
+  const answers = new Map<string, (message: Message) => void>();
+  let socket: WebSocket;
+  let delay = 500;
+  const connect = () => {
+    socket = new WebSocket(`${ORIGIN.replace(/^http/, 'ws')}${path}`);
+    socket.addEventListener('open', () => (delay = 500));
+    socket.addEventListener('message', (event) => {
+      const message = JSON.parse(event.data as string) as Message;
+      if (message.party !== party) {
+        // An answer to a control, which the page shows in the header and never in a box.
+        answers.get(message.action as string)?.(message);
+        return;
+      }
+      if (message.kind === 'holdings') return showHoldings(party, message as Holdings);
       say(party, describe(message));
-      if (party === 'A') readServer(message);
-      else readGateway(message);
-      return;
-    }
-    // An answer to a control, which the page shows in the header and never in a box.
-    for (const [index, take] of answers.entries()) {
-      if (!take(message)) continue;
-      answers.splice(index, 1);
-      return;
-    }
-  });
+    });
+    socket.addEventListener('close', () => {
+      for (const answer of [...answers.values()]) answer({ type: 'closed' });
+      say(party, `back channel closed, reconnecting in ${delay} ms`);
+      setTimeout(connect, delay);
+      delay = Math.min(delay * 2, RECONNECT_MAX_MS);
+    });
+  };
+  connect();
   return {
     async control(action, extra = {}) {
-      await opened;
+      if (socket.readyState === WebSocket.CONNECTING) await new Promise((resolve) => socket.addEventListener('open', resolve, { once: true }));
+      if (socket.readyState !== WebSocket.OPEN) return { type: 'closed', action };
       const operatorToken = sessionStorage.getItem(OPERATOR_TOKEN_KEY) ?? '';
-      const answer = new Promise<Message>((resolve) => answers.push((message) => (message.action === action ? (resolve(message), true) : false)));
+      const answer = new Promise<Message>((resolve) => {
+        const settle = (message: Message) => {
+          clearTimeout(timer);
+          answers.delete(action);
+          resolve({ ...message, action });
+        };
+        const timer = setTimeout(() => settle({ type: 'no answer' }), ANSWER_MS);
+        answers.set(action, settle);
+      });
       socket.send(JSON.stringify({ type: 'control', operatorToken, action, ...extra }));
       return answer;
     },
@@ -218,7 +210,8 @@ interface Listener {
 }
 
 let copies = newCopies();
-const eventSubscriptions = new Set<string>();
+// Each level 1 subscription's id, with the URI it watches, so a reconnect can subscribe again.
+const eventSubscriptions = new Map<string, string>();
 const etags = new Map<string, string>();
 const seen = new Set<string>();
 let listener: Listener | undefined;
@@ -226,9 +219,10 @@ let asleep = false;
 
 function newCopies(): Copies {
   return new Copies(async (target, { version, cursor }) => {
+    const hook = await listening();
     const result = await b.mcp.request<ResourceWebhookSubscribeResult>('resources/webhooks/subscribe', {
       ...target,
-      delivery: { url: listener!.hookUrl, secret: listener!.secret },
+      delivery: { url: hook.hookUrl, secret: hook.secret },
       form: 'full',
       catchUp: 'full',
       ttlMs: 3_600_000,
@@ -253,12 +247,19 @@ function titleOf(uri: string): string {
 
 function showClient(): void {
   const lines = [`client ${b.clientId()}`, listener ? `socket open${asleep ? ', asleep' : ''}` : 'no socket'];
-  for (const id of eventSubscriptions) lines.push(`event subscription ${id}`);
+  for (const [id, uri] of eventSubscriptions) lines.push(`event subscription ${id} to ${uri}`);
+  for (const { target, id, cursor } of copies.subscriptions()) lines.push(`subscription ${id ?? '(waiting)'} to ${Object.values(target)[0]}${cursor ? `, cursor ${cursor}` : ''}`);
   for (const uri of [...seen].sort()) {
     const copy = copies.get(uri);
     if (copy) lines.push(`${uri} at ${copy.version}${copy.deleted ? ', deleted' : titleOf(uri)}`);
   }
   hold('b', lines);
+}
+
+/** b's socket, opened first if it is not. */
+async function listening(): Promise<Listener> {
+  listener ??= await listen();
+  return listener;
 }
 
 async function listen(): Promise<Listener> {
@@ -267,15 +268,26 @@ async function listen(): Promise<Listener> {
   const socket = new WebSocket(url.replace(/^http/, 'ws'), ['rw.1', `rw.token.${token}`]);
   const secret = newSecret();
   let pinging: ReturnType<typeof setInterval> | undefined;
+  let heartbeatMs: number | undefined;
   const ping = () => {
     clearInterval(pinging);
-    pinging = setInterval(() => socket.send('ping'), heartbeatMs);
+    if (heartbeatMs) pinging = setInterval(() => socket.send('ping'), heartbeatMs);
+  };
+  let closedByPage = false;
+  const close = () => {
+    closedByPage = true;
+    socket.close(1000, 'Done');
   };
   const registered = new Promise<void>((resolve, reject) => {
     socket.addEventListener('message', (event) => {
       if (event.data === 'pong') return;
       const message = JSON.parse(event.data as string) as Message;
-      if (message.type === 'secret-registered') return resolve();
+      if (message.type === 'secret-registered') {
+        // B says how often to ping, since it counts a socket quiet for two heartbeats as asleep.
+        heartbeatMs = message.heartbeatMs as number;
+        if (!asleep) ping();
+        return resolve();
+      }
       if (message.type === 'secret-refused') return reject(new Error('B refused the secret'));
       if (message.type !== 'delivery') return;
       const body = JSON.parse(message.body as string) as Message;
@@ -288,19 +300,20 @@ async function listen(): Promise<Listener> {
       }
       showClient();
     });
-    socket.addEventListener('error', () => reject(new Error('B refused the socket')));
     socket.addEventListener('close', (event) => {
       clearInterval(pinging);
+      reject(new Error(`B closed the socket, ${event.code}`));
       say('b', `socket closed ${event.code} ${event.reason}`);
-      if (listener?.close === close) listener = undefined;
+      if (listener?.close !== close) return;
+      listener = undefined;
       showClient();
+      // B ends a socket at its token's expiry, and the network can drop one. The page reopens it
+      // with a new token and secret, and refreshes each subscription to name the new secret. A
+      // newer socket of b's own, or a Wipe, closes one with nothing to reopen.
+      if (!closedByPage && event.code !== 4000 && event.code !== 1012) run('b', reconnect);
     });
   });
-  socket.addEventListener('open', () => {
-    socket.send(JSON.stringify({ secret }));
-    ping();
-  });
-  const close = () => socket.close(1000, 'Done');
+  socket.addEventListener('open', () => socket.send(JSON.stringify({ secret })));
   await registered;
   say('b', `socket open on B, secret registered`);
   return {
@@ -316,14 +329,44 @@ async function listen(): Promise<Listener> {
   };
 }
 
+let reopenDelay = 500;
+
+// Reopens b's socket, trying again with a growing wait while B cannot be reached, and then
+// refreshes each subscription, at both levels, to name the new secret.
+async function reconnect(): Promise<void> {
+  try {
+    listener = await listen();
+  } catch (error) {
+    say('b', `reopening the socket failed, trying again in ${reopenDelay} ms: ${error instanceof Error ? error.message : String(error)}`);
+    setTimeout(() => run('b', reconnect), reopenDelay);
+    reopenDelay = Math.min(reopenDelay * 2, RECONNECT_MAX_MS);
+    return;
+  }
+  reopenDelay = 500;
+  showClient();
+  for (const [id, uri] of [...eventSubscriptions]) {
+    eventSubscriptions.delete(id);
+    await subscribeEvent(uri);
+  }
+  for (const { target } of copies.subscriptions()) await copies.refresh(target);
+  showClient();
+}
+
+async function subscribeEvent(uri: string): Promise<void> {
+  const hook = await listening();
+  const result = await b.mcp.request<{ resultType: 'complete'; id: string }>('events/subscribe', {
+    name: 'mcp.resource.updated',
+    arguments: { uri },
+    delivery: { mode: 'webhook', url: hook.hookUrl, secret: hook.secret },
+  });
+  eventSubscriptions.set(result.id, uri);
+  say('b', `events/subscribe → ${short(result)}`);
+}
+
 const a = client('a');
 const b = client('b');
 const A = backChannel('A');
 const B = backChannel('B');
-
-function targetOf(path: string): { uri: string } {
-  return { uri: `${ROOT}/${path.replace(/^\/+/, '')}` };
-}
 
 function uriOf(name: string): string {
   return `${ROOT}/${input(name).value.replace(/^\/+/, '')}`;
@@ -385,21 +428,14 @@ const ACTIONS: Record<string, [Party, () => Promise<void>]> = {
   'b-subscribe-event': [
     'b',
     async () => {
-      const uri = uriOf('b-path');
-      const result = await b.mcp.request<{ resultType: 'complete'; id: string }>('events/subscribe', {
-        name: 'mcp.resource.updated',
-        arguments: { uri },
-        delivery: { mode: 'webhook', url: listener!.hookUrl, secret: listener!.secret },
-      });
-      eventSubscriptions.add(result.id);
-      say('b', `events/subscribe → ${short(result)}`);
+      await subscribeEvent(uriOf('b-path'));
       showClient();
     },
   ],
   'b-subscribe': [
     'b',
     async () => {
-      const target = targetOf(input('b-path').value);
+      const target = { uri: uriOf('b-path') };
       seen.add(target.uri);
       await copies.refresh(target);
       showClient();
@@ -417,8 +453,8 @@ const ACTIONS: Record<string, [Party, () => Promise<void>]> = {
   'b-wake': [
     'b',
     async () => {
-      listener?.wake();
       asleep = false;
+      listener?.wake();
       say('b', 'the laptop wakes');
       showClient();
     },
@@ -431,14 +467,12 @@ const CONTROLS: Record<string, () => Promise<void>> = {
     const answers = await Promise.all([A.control('wipe'), B.control('wipe')]);
     showControl(answers);
     if (!answers.every((answer) => answer.type === 'done')) return;
-    // A forgot every registration and B closed every socket, so a and b start over.
+    // A forgot every registration and B closed every socket, so a and b start over. A and B report
+    // what they now hold, so only the page's own records and the messages are cleared here.
     listener?.close();
     listener = undefined;
-    clearBoxes();
-    serverHoldings.notes.clear();
-    serverHoldings.subscriptions.clear();
-    gatewayHoldings.sockets.clear();
-    gatewayHoldings.secrets.clear();
+    asleep = false;
+    for (const party of ['a', 'A', 'B', 'b'] as const) element(`[data-party="${party}"] .messages`).replaceChildren();
     written.clear();
     eventSubscriptions.clear();
     etags.clear();

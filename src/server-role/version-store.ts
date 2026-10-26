@@ -112,6 +112,18 @@ export class VersionStore {
     return { outcome: 'written', version: this.#add(path, null), created: false };
   }
 
+  /** Every resource's newest row, a deletion A still keeps included, in path order, as the page shows them. */
+  held(): { path: string; version: string; deleted: boolean }[] {
+    return this.#sql
+      .exec<{ path: string; stamp: number; deleted: number }>(
+        `SELECT path, stamp, deleted FROM Versions AS v
+         WHERE stamp = (SELECT MAX(stamp) FROM Versions WHERE path = v.path)
+         ORDER BY path`,
+      )
+      .toArray()
+      .map((row) => ({ path: row.path, version: this.#version(row.stamp), deleted: row.deleted === 1 }));
+  }
+
   /** The paths of every live resource under a folder, at any depth, in path order. */
   members(folder: string): string[] {
     // A range, not a LIKE pattern, which DO SQLite caps at 50 bytes. The trailing slash keeps

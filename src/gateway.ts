@@ -44,7 +44,11 @@ export class Gateway extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const name = this.ctx.id.name!;
     const path = new URL(request.url).pathname.slice(`/gateway/${name}`.length);
-    if (path === '/page') return acceptPage(this.ctx, 'B', this.env.VERSION, { heartbeatMs: this.#heartbeatMs });
+    if (path === '/page') {
+      const accepted = acceptPage(this.ctx, 'B', this.env.VERSION);
+      this.#reportHoldings();
+      return accepted;
+    }
     const socket = /^\/ws\/([^/]+)$/.exec(path);
     if (socket) return await this.#acceptClient(socket[1], request);
     const hook = /^\/hooks\/([^/]+)$/.exec(path);
@@ -76,12 +80,22 @@ export class Gateway extends DurableObject<Env> {
       return;
     }
     socket.serializeAttachment({ ...attachment, secret: parsed.secret } satisfies Attachment);
-    socket.send(JSON.stringify({ type: 'secret-registered' }));
+    // The heartbeat the client pings on, since B counts a socket quiet for two of them as asleep.
+    socket.send(JSON.stringify({ type: 'secret-registered', heartbeatMs: this.#heartbeatMs }));
     report(this.ctx, 'B', { kind: 'secret-registered', client: attachment.client, secret: parsed.secret });
+    this.#reportHoldings();
+  }
+
+  async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {
+    if (this.ctx.getTags(socket).includes(PAGE_TAG)) return;
+    const { client } = socket.deserializeAttachment() as Attachment;
+    report(this.ctx, 'B', { kind: 'closed', client, code, reason });
+    this.#reportHoldings();
   }
 
   async alarm(): Promise<void> {
     this.#closeExpired();
+    this.#reportHoldings();
     await this.#scheduleExpiry();
   }
 
@@ -97,6 +111,7 @@ export class Gateway extends DurableObject<Env> {
     server.serializeAttachment({ client, exp: claims.exp, connectedAt: new Date().toISOString() } satisfies Attachment);
     await this.#scheduleExpiry();
     report(this.ctx, 'B', { kind: 'connected', client });
+    this.#reportHoldings();
     return new Response(null, { status: 101, webSocket: browserSide, headers: { 'Sec-WebSocket-Protocol': SUBPROTOCOL } });
   }
 
@@ -110,6 +125,20 @@ export class Gateway extends DurableObject<Env> {
     const attachment = socket.deserializeAttachment() as Attachment;
     const lastSeen = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime() ?? Date.parse(attachment.connectedAt);
     return Date.now() - lastSeen > 2 * this.#heartbeatMs ? undefined : { socket, attachment };
+  }
+
+  // Each client's socket and its secret, to every page listening, and nothing when none is. The
+  // report redacts each secret.
+  #reportHoldings(): void {
+    if (this.ctx.getWebSockets(PAGE_TAG).length === 0) return;
+    const sockets = this.ctx
+      .getWebSockets()
+      .filter((socket) => !this.ctx.getTags(socket).includes(PAGE_TAG))
+      .map((socket) => {
+        const { client, secret, connectedAt } = socket.deserializeAttachment() as Attachment;
+        return { client, connectedAt, ...(secret ? { secret } : {}) };
+      });
+    report(this.ctx, 'B', { kind: 'holdings', sockets });
   }
 
   #forward(client: string, message: Forwarded): boolean {
@@ -150,6 +179,7 @@ export class Gateway extends DurableObject<Env> {
     if (control.action === 'wipe') {
       for (const socket of this.ctx.getWebSockets()) if (!this.ctx.getTags(socket).includes(PAGE_TAG)) socket.close(1012, 'Wiped');
       page.send(JSON.stringify({ type: 'done', action: 'wipe' }));
+      this.#reportHoldings();
     } else {
       page.send(JSON.stringify({ type: 'unknown', action: control.action }));
     }

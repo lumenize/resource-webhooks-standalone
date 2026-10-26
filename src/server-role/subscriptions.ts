@@ -169,6 +169,13 @@ export class Subscriptions {
       .toArray();
   }
 
+  /** Every subscription, a lapsed one included, without its secret, as the page shows them. */
+  held(): Omit<Subscription, 'secret'>[] {
+    return this.#sql
+      .exec<Omit<Subscription, 'secret'> & Record<string, SqlStorageValue>>('SELECT targetKind, target, principal, url, id, form, expiresAt FROM Subscriptions ORDER BY expiresAt')
+      .toArray();
+  }
+
   /** Forgets every subscription, as a Wipe does. */
   clear(): void {
     this.#generation++;

@@ -83,16 +83,20 @@ export async function level2(tier: Tier): Promise<void> {
   expect(results[before]).toEqual({ resultType: 'complete', id: subscribed.id, refreshBefore: expect.any(String), version: v2, _meta: META });
   expect(Date.parse(results[before].refreshBefore as string)).toBeGreaterThanOrEqual(Date.parse(subscribed.refreshBefore as string));
 
-  // Scenario 6: two edits while b is away, and only the newer reaches it.
+  // Scenario 6: two edits while b is away, and only the newer reaches it. A retries on the demo's
+  // schedule for it, so b is back before a retry, however slowly a loaded machine reconnects it.
+  const DEMO_SCHEDULE = [2000, 4000, 8000];
+  expect(await pageA.control('schedule', { delaysMs: DEMO_SCHEDULE })).toMatchObject({ type: 'done' });
   first.close();
   await untilClosed(tier, b.clientId);
   const v3 = await write(a, uri, 'Buy oat milk');
   await vi.waitFor(() => expect(attemptsTo(pageA, hookUrl).length).toBeGreaterThan(0), NETWORK_WAIT);
   const v4 = await write(a, uri, 'Buy oat milk', true);
   const second = await connect(secret);
-  await vi.waitFor(() => expect(copies.get(uri)?.version).toBe(v4), { ...NETWORK_WAIT, timeout: NETWORK_WAIT.timeout + tier.retryScheduleMs[0] });
+  await vi.waitFor(() => expect(copies.get(uri)?.version).toBe(v4), { ...NETWORK_WAIT, timeout: NETWORK_WAIT.timeout + DEMO_SCHEDULE[0] });
   expect(second.deliveries().map(({ body }) => body)).toEqual([{ uri, form: 'full', version: v4, contents: note('Buy oat milk', true) }]);
   expect(changes.map((change) => change.version)).not.toContain(v3);
+  expect(await pageA.control('schedule', { delaysMs: null })).toMatchObject({ type: 'done' });
 
   // Scenario 7: an absence longer than the retries, made up by a refresh naming the version held.
   second.close();

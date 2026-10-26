@@ -7,8 +7,9 @@
   // door like a POST to any other receiver.
   "compatibility_flags": ["global_fetch_strictly_public"],
   "assets": { "directory": "./public" },
-  // The page's script is compiled into the assets before every dev run and deploy.
-  "build": { "command": "npm run build:page", "watch_dir": "src/page" },
+  // The page's script is compiled into the assets before every dev run and deploy, and again
+  // under wrangler dev when anything it imports from src changes.
+  "build": { "command": "npm run build:page", "watch_dir": "src" },
   "durable_objects": {
     "bindings": [
       { "name": "SERVER", "class_name": "Server" },

@@ -12,7 +12,7 @@
     "dev": "wrangler dev",
     "test": "npm run check:schema && vitest run",
     "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.page.json",
-    "build:page": "tsc -p tsconfig.page.json",
+    "build:page": "node -e \"fs.rmSync('public/js', { recursive: true, force: true })\" && tsc -p tsconfig.page.json",
     "types": "wrangler types --env-file .dev.vars.example --strict-vars false",
     "generate:schema": "node scripts/generate-schemas.mjs",
     "check:schema": "node scripts/generate-schemas.mjs --check",

@@ -20,13 +20,12 @@ export function report(ctx: DurableObjectState, party: 'A' | 'B', body: Record<s
 
 /**
  * Accepts a page's back-channel socket, which needs no token: reports are open to the page. It
- * first says which version of the code this object runs, since a deploy reaches each object late,
- * and any setting the page needs, as B's heartbeat, which the page's `b` pings on.
+ * first says which version of the code this object runs, since a deploy reaches each object late.
  */
-export function acceptPage(ctx: DurableObjectState, party: 'A' | 'B', version: WorkerVersionMetadata, settings: Record<string, unknown> = {}): Response {
+export function acceptPage(ctx: DurableObjectState, party: 'A' | 'B', version: WorkerVersionMetadata): Response {
   const [client, server] = Object.values(new WebSocketPair());
   ctx.acceptWebSocket(server, [PAGE_TAG]);
-  server.send(JSON.stringify({ party, kind: 'hello', version: version.id, ...settings }));
+  server.send(JSON.stringify({ party, kind: 'hello', version: version.id }));
   return new Response(null, { status: 101, webSocket: client });
 }
 

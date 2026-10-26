@@ -1,4 +1,4 @@
 # Every asset, the page among them: scripts only from this origin, so a note's title shown on the
-# page can never run, and frames only from this origin, for the sign-in frame's return.
+# page can never run, and no other site may frame the page and steer a click to its Wipe button.
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; object-src 'none'

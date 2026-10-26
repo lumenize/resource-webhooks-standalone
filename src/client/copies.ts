@@ -68,6 +68,11 @@ export class Copies {
     return this.#copies.get(uri);
   }
 
+  /** Each subscription it has made, with the id and cursor of its last result. */
+  subscriptions(): { target: Target; id?: string; cursor?: string }[] {
+    return [...this.#subscriptions.values()].map(({ target, id, cursor }) => ({ target, ...(id ? { id } : {}), ...(cursor ? { cursor } : {}) }));
+  }
+
   /** The URIs of everything held that is not deleted, in no order. */
   held(): string[] {
     return [...this.#copies].filter(([, copy]) => !copy.deleted).map(([uri]) => uri);
