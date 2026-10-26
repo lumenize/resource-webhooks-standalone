@@ -1311,3 +1311,18 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 **Close-out.**
 
 - **R47 is written,** sep-notes.md's Findings answers where a resource with no `ETag` gets its version, and Scenario 1a's bullet shows the `_meta` version.
+
+### Phase 11
+
+**For Larry.**
+
+- **The proposal is drafted and committed, not pushed:** `proposals/XXXX-resource-webhooks.md`, commit `0bede26` on the `resource-webhooks` branch of `../experimental-ext-triggers-events`, which was already level with `upstream/main` at `d5316be`. The PR opens on your word, as the phase says.
+- **It names this repo as `lumenize/resource-webhooks-standalone`, which is not public yet,** in its Reference Implementation section, without a link. Either the repo goes public before the PR opens, or that sentence changes.
+- **It follows the SEP template Luca's Task Event Sources draft uses:** Extensions Track, you as author, seeking a sponsor. It copies the requirements from sep-notes.md, gives the Decisions table's rejected alternatives as its Rationale, carries the Findings, and ends with the objections we expect. Its examples use neutral hosts, `notes.example` and `gateway.example`, and only its Findings name the prototype's cast.
+- **Please check the quotes before it goes.** Each comes from the plan's record of SEP-3415's thread and its text, and the reviewing agent checks them against the linked pages where it can, but you were there.
+
+**Retro.**
+
+- **`scripts/check-proposal.mjs` checks a proposal's citations and links,** and a harness test shows it failing on a withdrawn number, an undefined one and a link to no file. On the proposal it checked 48 numbers and 11 links, all live, and a copy of the proposal citing R9 failed, as the criterion asks.
+- **sep-notes.md's Findings has an entry for every item of § *What building it should teach us*,** written from what the build measured and showed, and committed with phase 10's fixes.
+- **The full suite passes, 396 tests, the check's two more than phase 10 left.** Phase 11 changed no code the gates or the deployed tier run.
