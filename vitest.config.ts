@@ -33,6 +33,8 @@ export default defineConfig({
       lane('lane', ['test/lane/**/*.test.ts'], { ...BINDINGS, OPERATOR_TOKEN: 'test-operator-token-for-the-lane-only' }),
       // The same, with no operator-token binding at all, as a Worker deployed without the secret.
       lane('lane-closed', ['test/lane-closed/**/*.test.ts'], BINDINGS),
+      // The same, with one change to a result, so a test watches a collection's catch-up page.
+      lane('lane-paged', ['test/lane-paged/**/*.test.ts'], { ...BINDINGS, OPERATOR_TOKEN: 'test-operator-token-for-the-lane-only', PAGE_SIZE: '1' }),
       // The deployed tier, over the network, only when scripts/deployed.mjs has deployed one.
       ...(process.env.DEPLOYED_ORIGIN
         ? [

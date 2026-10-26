@@ -159,6 +159,16 @@ export class Subscriptions {
     );
   }
 
+  /** Every subscription of one kind, as `uriTemplate` or `listed`, whose targets a write must test. */
+  ofKind(targetKind: string): Subscription[] {
+    return this.#sql
+      .exec<Subscription & Record<string, SqlStorageValue>>(
+        'SELECT targetKind, target, principal, url, id, secret, form, expiresAt FROM Subscriptions WHERE targetKind = ?',
+        targetKind,
+      )
+      .toArray();
+  }
+
   /** Forgets every subscription, as a Wipe does. */
   clear(): void {
     this.#generation++;

@@ -158,7 +158,7 @@ block-beta
     | `c5` | note-44 | `v1` | |
     | `c6` | note-43 | `v4` | yes |
 
-    A cursor is a stamp. A collection's catch-up from `c1` reads each resource's newest row past it, `c6` and `c5`, and a patch reads the row of the version a client names. The stamp is SQLite's rowid, with each insert made before any pruning in one synchronous block, so a pruned top row never lends its stamp to the next write, at no write beyond the row itself. Rows hold paths relative to A's root, such as `/notes/inbox/note-42`, and a folder's members are a range on them, `path >= '/notes/inbox/' AND path < '/notes/inbox0'`, since DO SQLite refuses a `LIKE` pattern over 50 bytes. A body over 1 MiB is refused with `413`, well under SQLite's 2 MB row limit. Subscriptions sit in a table keyed `(targetKind, target, principal, url)` `WITHOUT ROWID`, so a write finds the subscriptions covering a URI by its key, and a refresh is one write. A drops rows older than its cut-off window as it writes, with no alarm, a setting of A's, a day by default, which the tests shorten to reach a reset, but keeps each live resource's newest row. It expires a subscription the same way, checking its grant lazily at delivery and sweeping expired ones when it wakes. A tells that a cursor is older than the rows it dropped with no write: stamps are dense, so when fewer rows lie past the cursor than the newest stamp less the cursor, a row past it was dropped, and the cursor gets a reset.
+    A cursor is a stamp. A collection's catch-up from `c1` reads each resource's newest row past it, `c6` and `c5`, and a patch reads the row of the version a client names. The stamp is SQLite's rowid, with each insert made before any pruning in one synchronous block, so a pruned top row never lends its stamp to the next write, at no write beyond the row itself. Rows hold paths relative to A's root, such as `/notes/inbox/note-42`, and a folder's members are a range on them, `path >= '/notes/inbox/' AND path < '/notes/inbox0'`, since DO SQLite refuses a `LIKE` pattern over 50 bytes. A body over 1 MiB is refused with `413`, well under SQLite's 2 MB row limit. Subscriptions sit in a table keyed `(targetKind, target, principal, url)` `WITHOUT ROWID`, so a write finds the subscriptions covering a URI by its key, and a refresh is one write. A drops rows older than its cut-off window as it writes, with no alarm, a setting of A's, a day by default, which the tests shorten to reach a reset, but keeps each live resource's newest row. It expires a subscription the same way, checking its grant lazily at delivery and sweeping expired ones when it wakes. A tells it can no longer serve a cursor with no write of its own. Since a prune keeps each live resource's newest row, only a dropped deletion loses a change, and A keeps the stamp of the newest deletion it dropped for its base version. A cursor before that stamp gets a reset, and one past it is served even when older versions after it were dropped.
   - **A list is the second type,** `{ "title": "Groceries", "items": ["oat milk"] }`, so that a template can match across types.
 - **B is a gateway, and stores nothing.** It receives webhooks for each of its clients at a URL of that client's own, `/gateway/B/hooks/{client}`, the path shape SEP-3415's own examples use, and passes each one down that client's WebSocket. Each socket carries its client's secret in its attachment, so B writes nothing, as Lumenize's Gateway writes nothing. B never calls A, and holds no principal there.
   - **SEP-3415 uses both words, gateway and forward proxy, sometimes in one paragraph,** as Appendix A's webhook mode does. This design says gateway. Unlike the proxy of § *Webhook-Based Delivery*, which serves events to its clients by poll or push and so buffers them, B passes each delivery straight down its client's socket and keeps none. Lumenize's Gateway also carries a client's calls up to the nodes, and this one carries only deliveries down, since `b` calls A itself.
@@ -929,7 +929,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
      - No delivery carries a cursor. Mutation: add one.
      - With the page size set to one, a catch-up of two changes comes in two results that list each member once, the second without `hasMore`. Mutation: return the newest stamp as the `hasMore` cursor.
      - A paged reset with page size one leaves `b` dropping nothing until its last page. Mutation: drop after each page.
-     - A write between two pages is returned by the next refresh. Mutation: take the reset's final cursor at its first page.
+     - A write between two pages is returned by the next refresh. Mutation: take the listing's final cursor at its last page.
      - A collection catch-up with `catchUp: "full"` carries each member's contents. Mutation: ignore `catchUp` for collections.
      - `.../server/A/{type}/archive` covers both types' archives, `{+path}` matches any depth, and a template with another expression is refused with `Unsupported`. Mutation: let `{type}` span segments.
      - A `listed` target covers the lists as well as the inbox, and a write to an archived note is not delivered on it. Mutation: list every note.
@@ -1170,3 +1170,29 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 **Close-out.**
 
 - **Phase 4's unit test of the queue's replacement now has its end-to-end tests here,** and stays as the closer check of the queue's own rules.
+
+### Phase 7
+
+**For Larry.**
+
+- **A no longer counts rows to tell a stale cursor, as § *The cast* had it, but compares the cursor with the stamp of the newest deletion it has dropped.** A prune keeps each live resource's newest row, so only a dropped deletion loses a change, and A already keeps that stamp for its base version. The count also reset a cursor when the only rows dropped after it were older versions, which lose nothing, and a test now shows such a cursor served. Both need no write of their own, and § *The cast* says the new rule.
+- **A cursor is `c{epoch}.{stamp}`, and a page of a listing is `l{epoch}.{stamp}.{path}`, or `r…` for a page of a reset,** with the path in base64url and the stamp the one the listing began at. The listing's last page answers `c{epoch}.{stamp}` with that stamp, so a write between its pages comes back in the next refresh. A cursor A did not write, a malformed one, and one from before a Wipe each get a reset, never an error (R34). R36 lets a client rely on none of this.
+- **R39 goes unexercised,** since everyone may read A's notes, as the phase planned and R39 itself says. No revocation was built to trigger it.
+
+**Retro.**
+
+- **A folder or a type's root named by `uri`, a `uriTemplate`, and `listed` are collections,** decided by the target alone, so a subscription's kind never changes with its number of members (R38). An empty folder answers `changes: []` and a cursor.
+- **A write finds the subscriptions covering it three ways:** by the URIs of the resource and each folder above it, as level 1 does, by testing each template subscription's matcher, and by asking whether `resources/list` lists the path. One constant, `LISTED_FOLDERS`, feeds both `resources/list` and the `listed` target, so they cannot drift apart.
+- **A template's `{name}` matches one segment and `{+name}` any depth.** Any other expression, and an unmatched brace, answers `Unsupported` with the template as its `value`.
+- **`Copies` takes a collection's pages as they come and drops on a reset's last page what no page listed.** It keeps a collection's cursor. When a delivery crosses a refresh, it takes the pages anyway and refreshes again from the cursor, which returns whatever the crossing changed.
+- **The page size is a binding, `PAGE_SIZE`, 100 in both configs.** The `lane-paged` project runs with 1, to show paging.
+- **23 mutations, 21 caught by the test aimed at them on the first run.** The other two:
+  - Listing deleted members survived, since no test listed a folder holding a deletion. A test now lists one with no cursor.
+  - Decoding a malformed listing cursor leniently survived, since the test's cursor carried the old epoch, which reset it first. The test now builds the malformed cursor in the current epoch.
+- **Phase 7's criterion for a write between two pages named its mutation backwards,** as taking the final cursor at the first page, which is the correct behaviour. It now reads "at its last page".
+- **The test of `resources/templates/list` checked only each `uriTemplate`.** It now checks each entry whole, against § *The cast*.
+- **The full suite passes, 314 tests, 14 more than phase 6 left,** both conformance gates still exit 0 at their baselines, and the deployed tier passes its five files on a fresh deploy, Scenarios 9 and 10 among them.
+
+**Close-out.**
+
+- **Phase 6's interim is gone:** a folder, a template or `listed` no longer answers `Unsupported`.

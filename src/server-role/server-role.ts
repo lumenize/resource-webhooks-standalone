@@ -77,6 +77,8 @@ export interface ServerRoleOptions {
   /** The delays between delivery attempts A is set to, before they are held to SEP-3415's bounds. */
   retrySchedule: () => readonly number[];
   verificationBurst: number;
+  /** How many changes one result for a collection carries at most. */
+  pageSize: number;
   subscriptionIdKey: string;
   maxTtlMs: number;
   subscriptionCap: number;
@@ -86,6 +88,9 @@ export interface ServerRoleOptions {
 type Method = (params: Record<string, unknown>, principal: string | undefined) => Result | Promise<Result>;
 
 type Contents = TextResourceContents | BlobResourceContents;
+
+// What resources/list returns: the inbox's notes and every list. A listed target covers the same.
+const LISTED_FOLDERS = ['/notes/inbox', '/lists'];
 
 // Every read result answers ttlMs 0, so no cache serves a version older than one a delivery names.
 const UNCACHED = { ttlMs: 0, cacheScope: 'public' } as const;
@@ -151,6 +156,8 @@ export class ServerRole {
       deliveries: this.#deliveries,
       subscriptions: this.#subscriptions,
       contentsOf: (path, text) => this.#entry(path, text),
+      listed: (path) => LISTED_FOLDERS.some((folder) => path.startsWith(`${folder}/`)),
+      pageSize: options.pageSize,
     });
     this.#methods = new Map<string, Method>([
       ['server/discover', () => this.#discover()],
@@ -240,16 +247,16 @@ export class ServerRole {
 
   #listResources(params: Record<string, unknown>): ListResourcesResult {
     requireNoCursor(params);
-    const own = [...this.store.members('/notes/inbox'), ...this.store.members('/lists')].map((path) => this.#resource(path));
+    const own = LISTED_FOLDERS.flatMap((folder) => this.store.members(folder)).map((path) => this.#resource(path));
     return { resultType: 'complete', resources: [...own, ...(this.#extras.resources ?? []).map(({ resource }) => resource)], ...UNCACHED };
   }
 
   #listTemplates(params: Record<string, unknown>): ListResourceTemplatesResult {
     requireNoCursor(params);
-    const own: ResourceTemplate[] = Object.entries(TYPES).map(([type, { singular }]) => ({
+    const own: ResourceTemplate[] = Object.entries(TYPES).map(([type, { singular, shape }]) => ({
       uriTemplate: `${this.#root}/${type}/{+path}`,
       name: type,
-      description: `A ${singular}, or a folder of ${type}`,
+      description: `A ${singular}, ${shape}, or a folder of ${type}`,
       mimeType: 'application/json',
     }));
     return {

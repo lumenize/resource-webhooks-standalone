@@ -37,11 +37,16 @@ export async function level2(tier: Tier): Promise<void> {
   const socketToken = await b.session.tokenForResource(tier.origin, socketUrl(tier, b.clientId));
   const connect = async (secret?: string) => {
     listener = await listen(tier, b, { token: socketToken, ...(secret ? { secret } : {}) });
-    listener.onDelivery((body, webhookId) => {
+    listener.onDelivery((body, meta) => {
       changes.push(body as unknown as ResourceChange);
-      copies.deliver(body as unknown as ResourceChange, webhookId);
+      copies.deliver(body as unknown as ResourceChange, meta);
     });
     return listener;
+  };
+
+  const refreshed = async (target: string) => {
+    await copies.refresh({ uri: target });
+    return copies.get(target);
   };
 
   // Scenario 3: a first subscription, from nothing, in the full form, with the contents in the result.
@@ -49,12 +54,12 @@ export async function level2(tier: Tier): Promise<void> {
   const first = await connect();
   const { hookUrl, secret } = first;
   const results: Record<string, unknown>[] = [];
-  const copies = new Copies(async (target, version) => {
-    const result = await subscribeResource(b, target, hookUrl, secret, { form: 'full', catchUp: 'full', ...(version ? { version } : {}) });
+  const copies = new Copies(async (target, { version }) => {
+    const result = await subscribeResource(b, (target as { uri: string }).uri, hookUrl, secret, { form: 'full', catchUp: 'full', ...(version ? { version } : {}) });
     results.push(result);
     return result;
   });
-  expect(await copies.refresh(uri)).toEqual({ version: v1, deleted: false, contents: note('Buy milk', false) });
+  expect(await refreshed(uri)).toEqual({ version: v1, deleted: false, contents: note('Buy milk', false) });
   const [subscribed] = results;
   expect(subscribed).toEqual({
     resultType: 'complete',
@@ -74,7 +79,7 @@ export async function level2(tier: Tier): Promise<void> {
 
   // Scenario 5: a refresh naming the version held answers it, with no contents and a new grant.
   const before = results.length;
-  expect(await copies.refresh(uri)).toEqual({ version: v2, deleted: false, contents: note('Buy milk', true) });
+  expect(await refreshed(uri)).toEqual({ version: v2, deleted: false, contents: note('Buy milk', true) });
   expect(results[before]).toEqual({ resultType: 'complete', id: subscribed.id, refreshBefore: expect.any(String), version: v2, _meta: META });
   expect(Date.parse(results[before].refreshBefore as string)).toBeGreaterThanOrEqual(Date.parse(subscribed.refreshBefore as string));
 
@@ -98,14 +103,14 @@ export async function level2(tier: Tier): Promise<void> {
   await vi.waitFor(() => expect(attemptsTo(pageA, hookUrl).slice(attempted)).toHaveLength(tier.retryScheduleMs.length + 1), { ...NETWORK_WAIT, timeout: NETWORK_WAIT.timeout + window });
   expect(copies.get(uri)?.version).toBe(v4);
   await connect(secret);
-  expect(await copies.refresh(uri)).toEqual({ version: v5, deleted: false, contents: note('Buy oat milk and bread', true) });
+  expect(await refreshed(uri)).toEqual({ version: v5, deleted: false, contents: note('Buy oat milk and bread', true) });
 
   // Scenario 8: a deletion goes in the notify form, and the subscription carries on.
   const deleted = await a.client.request('tools/call', { name: 'delete_note', arguments: { uri } });
   const v6 = (deleted.structuredContent as { version: string }).version;
   await vi.waitFor(() => expect(copies.get(uri)).toEqual({ version: v6, deleted: true }), NETWORK_WAIT);
   expect(changes.at(-1)).toEqual({ uri, form: 'notify', version: v6, deleted: true });
-  expect(await copies.refresh(uri)).toEqual({ version: v6, deleted: true });
+  expect(await refreshed(uri)).toEqual({ version: v6, deleted: true });
   const v7 = await write(a, uri, 'Buy milk again');
   await vi.waitFor(() => expect(copies.get(uri)).toEqual({ version: v7, deleted: false, contents: note('Buy milk again', false) }), NETWORK_WAIT);
   expect(new Set([v1, v2, v3, v4, v5, v6, v7]).size).toBe(7);

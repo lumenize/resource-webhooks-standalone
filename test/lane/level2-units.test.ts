@@ -19,7 +19,7 @@ describe("b's copies", () => {
   const uri = 'https://a.example/server/A/notes/inbox/note-42';
   const subscribed = async () => {
     const copies = new Copies(async () => ({ resultType: 'complete', id: 'sub_1', refreshBefore: null, version: 'v1' }) as ResourceWebhookSubscribeResult);
-    await copies.refresh(uri);
+    await copies.refresh({ uri });
     return copies;
   };
 
@@ -35,9 +35,9 @@ describe("b's copies", () => {
 
   it('drops a delivery whose webhook-id it has seen, as a late retry of an older version', async () => {
     const copies = await subscribed();
-    copies.deliver({ uri, form: 'notify', version: 'v2' }, 'msg_2');
-    copies.deliver({ uri, form: 'notify', version: 'v3' }, 'msg_3');
-    copies.deliver({ uri, form: 'notify', version: 'v2' }, 'msg_2');
+    copies.deliver({ uri, form: 'notify', version: 'v2' }, { webhookId: 'msg_2' });
+    copies.deliver({ uri, form: 'notify', version: 'v3' }, { webhookId: 'msg_3' });
+    copies.deliver({ uri, form: 'notify', version: 'v2' }, { webhookId: 'msg_2' });
     expect(copies.get(uri)?.version).toBe('v3');
   });
 

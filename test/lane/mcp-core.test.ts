@@ -102,8 +102,11 @@ describe('the core methods', () => {
       { uri: `${lane.root}/notes/inbox/note-42`, name: 'note-42', title: 'Buy milk', mimeType: 'application/json' },
       { uri: `${lane.root}/lists/list-7`, name: 'list-7', title: 'Groceries', mimeType: 'application/json' },
     ]);
-    const { resourceTemplates } = await lane.client.request<{ resultType: string; resourceTemplates: { uriTemplate: string }[] }>('resources/templates/list');
-    expect(resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual([`${lane.root}/notes/{+path}`, `${lane.root}/lists/{+path}`]);
+    const { resourceTemplates } = await lane.client.request<{ resultType: string; resourceTemplates: unknown[] }>('resources/templates/list');
+    expect(resourceTemplates).toEqual([
+      { uriTemplate: `${lane.root}/notes/{+path}`, name: 'notes', description: 'A note, { title, done?, due? }, or a folder of notes', mimeType: 'application/json' },
+      { uriTemplate: `${lane.root}/lists/{+path}`, name: 'lists', description: 'A list, { title, items }, or a folder of lists', mimeType: 'application/json' },
+    ]);
   });
 
   it("reads a folder as one entry per note under it, and refuses a URI it does not serve with the URI in data", async () => {

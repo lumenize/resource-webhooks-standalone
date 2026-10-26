@@ -100,17 +100,8 @@ describe("A's subscribe", () => {
     expect(await refusal(subscribeResource(b, uri, endpoint.url(), newSecret(), { form: 'patch' }))).toEqual({ code: -32026, data: { feature: 'form', value: 'patch' } });
     expect(await refusal(subscribeResource(b, uri, endpoint.url(), newSecret(), { catchUp: 'patch' }))).toEqual({ code: -32026, data: { feature: 'catchUp', value: 'patch' } });
     expect(await refusal(subscribeResource(b, uri, endpoint.url(), newSecret(), { listed: true }))).toMatchObject({ code: -32602 });
-    expect(await refusal(b.client.request('resources/webhooks/subscribe', { listed: true, delivery: { url: endpoint.url(), secret: newSecret() } }))).toEqual({
-      code: -32026,
-      data: { feature: 'target', value: 'listed' },
-    });
     expect(await refusal(b.client.request('resources/webhooks/unsubscribe', { uri, delivery: { url: endpoint.url().replace('https:', 'http:') } }))).toMatchObject({ code: -32602 });
-    // Collections and templates are level 2's next step, and refused until then.
-    expect(await refusal(subscribeResource(b, `${lane.root}/notes/inbox`, endpoint.url(), newSecret()))).toEqual({ code: -32026, data: { feature: 'target', value: 'collection' } });
-    expect(await refusal(b.client.request('resources/webhooks/subscribe', { uriTemplate: `${lane.root}/notes/{+path}`, delivery: { url: endpoint.url(), secret: newSecret() } }))).toEqual({
-      code: -32026,
-      data: { feature: 'target', value: 'uriTemplate' },
-    });
+
     expect(endpoint.challenges()).toHaveLength(0);
   });
 
@@ -406,20 +397,20 @@ describe("b's copies", () => {
     const listener = await listen(lane, b);
     let hold: Promise<void> | undefined;
     const results: string[] = [];
-    const copies = new Copies(async (target, version) => {
-      const result = await subscribeResource(b, target, listener.hookUrl, listener.secret, { catchUp: 'full', ...(version ? { version } : {}) });
+    const copies = new Copies(async (target, { version }) => {
+      const result = await subscribeResource(b, (target as { uri: string }).uri, listener.hookUrl, listener.secret, { catchUp: 'full', ...(version ? { version } : {}) });
       results.push(result.version!);
       await hold;
       return result;
     });
-    listener.onDelivery((change) => copies.deliver(change as unknown as ResourceChange));
+    listener.onDelivery((change, meta) => copies.deliver(change as unknown as ResourceChange, meta));
     const v4 = await write(a, uri, 'Four');
-    await copies.refresh(uri);
+    await copies.refresh({ uri });
     expect(copies.get(uri)?.version).toBe(v4);
 
     let release!: () => void;
     hold = new Promise<void>((resolve) => (release = resolve));
-    const refreshing = copies.refresh(uri);
+    const refreshing = copies.refresh({ uri });
     await vi.waitFor(() => expect(results).toHaveLength(2));
     const v5 = await write(a, uri, 'Five');
     await vi.waitFor(() => expect(copies.get(uri)?.version).toBe(v5));
@@ -437,17 +428,18 @@ describe("b's copies", () => {
     const gates: (() => void)[] = [];
     let held = false;
     const results: string[] = [];
-    const copies = new Copies(async (target, version) => {
-      const result = await subscribeResource(b, target, listener.hookUrl, listener.secret, { ...(version ? { version } : {}) });
+    const copies = new Copies(async (target, { version }) => {
+      const result = await subscribeResource(b, (target as { uri: string }).uri, listener.hookUrl, listener.secret, { ...(version ? { version } : {}) });
       results.push(result.version!);
       if (held) await new Promise<void>((resolve) => gates.push(resolve));
       return result;
     });
-    listener.onDelivery((change, webhookId) => copies.deliver(change as unknown as ResourceChange, webhookId));
-    const v1 = (await copies.refresh(uri))!.version;
+    listener.onDelivery((change, meta) => copies.deliver(change as unknown as ResourceChange, meta));
+    await copies.refresh({ uri });
+    const v1 = copies.get(uri)!.version;
     held = true;
-    const first = copies.refresh(uri);
-    const second = copies.refresh(uri);
+    const first = copies.refresh({ uri });
+    const second = copies.refresh({ uri });
     await vi.waitFor(() => expect(gates).toHaveLength(2));
     held = false;
     gates[0]();

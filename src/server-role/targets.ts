@@ -2,8 +2,8 @@
 // `/notes/inbox/note-42` under `https://….workers.dev/server/A`.
 
 export const TYPES = {
-  notes: { singular: 'note', definition: 'Note' },
-  lists: { singular: 'list', definition: 'List' },
+  notes: { singular: 'note', definition: 'Note', shape: '{ title, done?, due? }' },
+  lists: { singular: 'list', definition: 'List', shape: '{ title, items }' },
 } as const;
 
 export type TypeName = keyof typeof TYPES;

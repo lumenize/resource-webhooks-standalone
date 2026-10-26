@@ -1,8 +1,9 @@
 // Level 2: this extension's own methods, `resources/webhooks/subscribe` and
-// `resources/webhooks/unsubscribe`, for a `uri` naming one resource, and the `ResourceChange` each
-// write delivers, as sep-notes.md's requirements say. Deliveries go through the webhook module
-// level 1 uses, with one slot per subscription and URI, so a newer version replaces a pending one
-// (R12), and subscriptions live in the table both levels share.
+// `resources/webhooks/unsubscribe`, and the `ResourceChange` each write delivers, as sep-notes.md's
+// requirements say. A target is one resource, or a collection: a folder or a type's root named by
+// `uri`, a `uriTemplate`, or `listed`. Deliveries go through the webhook module level 1 uses, with
+// one slot per subscription and URI, so a newer version replaces a pending one (R12), and
+// subscriptions live in the table both levels share.
 import { JsonRpcError } from '../json-rpc';
 import { FORBIDDEN, NOT_FOUND, UNSUPPORTED } from '../events-types';
 import type {
@@ -16,9 +17,10 @@ import type {
 } from '../resource-webhooks-types';
 import { INVALID_PARAMS, type Result } from '../vendor/mcp-spec/2026-07-28/schema';
 import { randomId, type Deliveries } from './deliveries';
-import { coveringTargets, type SubscriptionKey, type Subscriptions } from './subscriptions';
+import { coveringTargets, type Subscription, type SubscriptionKey, type Subscriptions } from './subscriptions';
 import { parseTarget } from './targets';
-import type { VersionStore } from './version-store';
+import { templateMatcher } from './uri-templates';
+import type { Row, VersionStore } from './version-store';
 
 /** The forms A delivers, as its capability declares them. */
 export const FORMS: readonly ResourceWebhookForm[] = ['notify', 'full'];
@@ -26,7 +28,8 @@ export const FORMS: readonly ResourceWebhookForm[] = ['notify', 'full'];
 /** The largest body A sends in the `full` form, SEP-3415's delivery profile, past which it sends `notify` (R27). */
 export const FULL_BODY_LIMIT = 256 * 1024;
 
-const TARGET_KIND = 'uri';
+/** What a subscription covers: one resource, or the paths of a collection's members. */
+type Coverage = { kind: 'resource'; path: string } | { kind: 'collection'; covers: (path: string) => boolean };
 
 export interface ResourceWebhooksOptions {
   /** A's own URI, as `https://….workers.dev/server/A`. */
@@ -36,10 +39,16 @@ export interface ResourceWebhooksOptions {
   subscriptions: Subscriptions;
   /** A resource's contents entry, as `resources/read` gives it, from its path and stored text. */
   contentsOf(path: string, text: string): ResourceContents;
+  /** Whether `resources/list` lists the resource at a path, which a `listed` target covers (R20). */
+  listed(path: string): boolean;
+  /** How many changes one result carries at most, after which it sets `hasMore` (R35). */
+  pageSize: number;
 }
 
 export class ResourceWebhooks {
   readonly #options: ResourceWebhooksOptions;
+  // Compiled once per template, since each write tests every template subscription.
+  readonly #matchers = new Map<string, (uri: string) => boolean>();
 
   constructor(options: ResourceWebhooksOptions) {
     this.#options = options;
@@ -52,7 +61,7 @@ export class ResourceWebhooks {
 
   async subscribe(params: ResourceWebhookSubscribeRequestParams, principal: string | undefined): Promise<ResourceWebhookSubscribeResult> {
     const { subscriptions, deliveries, store, contentsOf } = this.#options;
-    const { key, path } = this.#key(params, principal);
+    const { key, coverage } = this.#key(params, principal);
     const form = declared('form', params.form);
     const catchUp = declared('catchUp', params.catchUp);
     const { secret } = params.delivery;
@@ -66,10 +75,11 @@ export class ResourceWebhooks {
     // synchronous block, and a write that landed meanwhile is in the result.
     const refreshBefore = subscriptions.grant(params.ttlMs);
     subscriptions.write({ ...key, id, secret, form, expiresAt: refreshBefore }, generation);
-    const state = store.state(path);
+    if (coverage.kind === 'collection') return { resultType: 'complete', id, refreshBefore, ...this.#catchUp(coverage.covers, params.cursor, catchUp) };
+    const state = store.state(coverage.path);
     const result: ResourceWebhookSubscribeResult = { resultType: 'complete', id, refreshBefore, version: state.version };
     if (state.deleted) return { ...result, deleted: true };
-    if (catchUp === 'full' && params.version !== state.version) return { ...result, contents: [contentsOf(path, state.contents)] };
+    if (catchUp === 'full' && params.version !== state.version) return { ...result, contents: [contentsOf(coverage.path, state.contents)] };
     return result;
   }
 
@@ -101,24 +111,126 @@ export class ResourceWebhooks {
       }
       return full;
     };
-    for (const row of subscriptions.covering(TARGET_KIND, coveringTargets(uri, root))) {
+    for (const row of this.#covering(path, uri)) {
       // A new message for each version, with its own webhook-id, kept across that version's retries (R14).
       const webhookId = `msg_${randomId(24)}`;
       deliveries.enqueue(`${row.id}\n${uri}`, { url: row.url, secret: row.secret, subscriptionId: row.id, webhookId, body: bodyFor(row.form), until: row.expiresAt });
     }
   }
 
-  #key(params: { uri?: string; uriTemplate?: string; listed?: true; delivery: { url: string } }, principal: string | undefined): { key: SubscriptionKey; path: string } {
+  // Every live or lapsed subscription covering a write at `path`: a uri naming it or a folder above
+  // it, a template it matches, and a listed target if resources/list lists it.
+  #covering(path: string, uri: string): Subscription[] {
+    const { subscriptions, root, listed } = this.#options;
+    return [
+      ...subscriptions.covering('uri', coveringTargets(uri, root)),
+      ...subscriptions.ofKind('uriTemplate').filter((row) => this.#matcher(row.target)?.(uri)),
+      ...(listed(path) ? subscriptions.ofKind('listed') : []),
+    ];
+  }
+
+  #matcher(template: string): ((uri: string) => boolean) | undefined {
+    if (!this.#matchers.has(template)) {
+      const matcher = templateMatcher(template);
+      if (!matcher) return undefined;
+      this.#matchers.set(template, matcher);
+    }
+    return this.#matchers.get(template);
+  }
+
+  // A collection's changes after a cursor, or every member there is when none is named or A can no
+  // longer serve the one named, a page at a time (R32 to R35). A cursor names an epoch and a stamp,
+  // and a page of a listing adds the stamp the listing began at and the last path it listed.
+  #catchUp(covers: (path: string) => boolean, cursor: string | undefined, form: ResourceWebhookForm) {
+    const { store, pageSize } = this.#options;
+    const epoch = store.epoch();
+    const parsed = cursor === undefined ? undefined : parseCursor(cursor);
+    if (cursor !== undefined && (parsed?.epoch !== epoch || (parsed.kind === 'changes' && !store.keepsEverythingAfter(parsed.stamp)))) {
+      return this.#listing(covers, form, store.newestStamp(), '', true);
+    }
+    if (parsed === undefined) return this.#listing(covers, form, store.newestStamp(), '', false);
+    if (parsed.kind !== 'changes') return this.#listing(covers, form, parsed.snapshot, parsed.after, parsed.kind === 'reset');
+    const rows = store.changedAfter(parsed.stamp, covers, pageSize + 1);
+    const page = rows.slice(0, pageSize);
+    const hasMore = rows.length > pageSize;
+    return {
+      changes: page.map((row) => this.#change(row, form)),
+      cursor: `c${epoch}.${hasMore ? page.at(-1)!.stamp : store.newestStamp()}`,
+      ...(hasMore ? { hasMore: true as const } : {}),
+    };
+  }
+
+  // Every live member after `after`, in path order. Its last page's cursor is the stamp the
+  // listing began at, so a write between its pages comes in the next refresh.
+  #listing(covers: (path: string) => boolean, form: ResourceWebhookForm, snapshot: number, after: string, reset: boolean) {
+    const { store, pageSize } = this.#options;
+    const rows = store.liveAfter(after, covers, pageSize + 1);
+    const page = rows.slice(0, pageSize);
+    const hasMore = rows.length > pageSize;
+    const epoch = store.epoch();
+    return {
+      changes: page.map((row) => this.#change(row, form)),
+      cursor: hasMore ? `${reset ? 'r' : 'l'}${epoch}.${snapshot}.${toBase64Url(page.at(-1)!.path)}` : `c${epoch}.${snapshot}`,
+      ...(hasMore ? { hasMore: true as const } : {}),
+      ...(reset ? { reset: true as const } : {}),
+    };
+  }
+
+  #change(row: Row, form: ResourceWebhookForm): ResourceChange {
+    const uri = `${this.#options.root}${row.path}`;
+    if (row.deleted) return { uri, form: 'notify', version: row.version, deleted: true };
+    if (form === 'full') return { uri, form: 'full', version: row.version, contents: [this.#options.contentsOf(row.path, row.contents)] };
+    return { uri, form: 'notify', version: row.version };
+  }
+
+  #key(params: { uri?: string; uriTemplate?: string; listed?: true; delivery: { url: string } }, principal: string | undefined): { key: SubscriptionKey; coverage: Coverage } {
     if (!principal) throw new JsonRpcError(FORBIDDEN, 'Subscribing needs an authenticated principal');
     const targets = (['uri', 'uriTemplate', 'listed'] as const).filter((name) => params[name] !== undefined);
     if (targets.length !== 1) throw new JsonRpcError(INVALID_PARAMS, 'A subscription names exactly one of uri, uriTemplate and listed');
-    if (params.uri === undefined) throw new JsonRpcError(UNSUPPORTED, 'A subscribes only to a uri naming one resource', { feature: 'target', value: targets[0] });
+    const url = params.delivery.url;
+    if (params.uriTemplate !== undefined) {
+      const matcher = this.#matcher(params.uriTemplate);
+      if (!matcher) throw new JsonRpcError(UNSUPPORTED, 'A matches a template only by {name} and {+name}', { feature: 'uriTemplate', value: params.uriTemplate });
+      const { root } = this.#options;
+      return { key: { targetKind: 'uriTemplate', target: params.uriTemplate, principal, url }, coverage: { kind: 'collection', covers: (path) => matcher(`${root}${path}`) } };
+    }
+    if (params.listed !== undefined) {
+      return { key: { targetKind: 'listed', target: '', principal, url }, coverage: { kind: 'collection', covers: (path) => this.#options.listed(path) } };
+    }
     const { root } = this.#options;
-    const target = params.uri.startsWith(`${root}/`) ? parseTarget(params.uri.slice(root.length)) : undefined;
+    const uri = params.uri!;
+    const target = uri.startsWith(`${root}/`) ? parseTarget(uri.slice(root.length)) : undefined;
     // As resources/read refuses a URI A could never serve (R7).
-    if (!target) throw new JsonRpcError(INVALID_PARAMS, 'Resource not found', { uri: params.uri });
-    if (!target.resource) throw new JsonRpcError(UNSUPPORTED, 'A subscribes only to a uri naming one resource', { feature: 'target', value: 'collection' });
-    return { key: { targetKind: TARGET_KIND, target: params.uri, principal, url: params.delivery.url }, path: target.path };
+    if (!target) throw new JsonRpcError(INVALID_PARAMS, 'Resource not found', { uri });
+    const key = { targetKind: 'uri', target: uri, principal, url };
+    // A folder or a type's root is a collection, whatever its number of members (R38).
+    if (!target.resource) return { key, coverage: { kind: 'collection', covers: (path) => path.startsWith(`${target.path}/`) } };
+    return { key, coverage: { kind: 'resource', path: target.path } };
+  }
+}
+
+type Cursor = { kind: 'changes'; epoch: number; stamp: number } | { kind: 'listing' | 'reset'; epoch: number; snapshot: number; after: string };
+
+// A cursor this A wrote, or undefined for anything else, which the caller answers with a reset.
+function parseCursor(cursor: string): Cursor | undefined {
+  const changes = /^c(\d+)\.(\d+)$/.exec(cursor);
+  if (changes) return { kind: 'changes', epoch: Number(changes[1]), stamp: Number(changes[2]) };
+  const listing = /^([lr])(\d+)\.(\d+)\.([A-Za-z0-9_-]+)$/.exec(cursor);
+  if (!listing) return undefined;
+  const after = fromBase64Url(listing[4]);
+  if (after === undefined) return undefined;
+  return { kind: listing[1] === 'r' ? 'reset' : 'listing', epoch: Number(listing[2]), snapshot: Number(listing[3]), after };
+}
+
+function toBase64Url(text: string): string {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(text: string): string | undefined {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0)));
+  } catch {
+    return undefined;
   }
 }
 

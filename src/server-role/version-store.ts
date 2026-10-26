@@ -17,6 +17,9 @@ export type Current =
   | { version: string; deleted: false; contents: string }
   | { version: string; deleted: true };
 
+/** A resource's row with its path and stamp, as a collection's catch-up reads it. */
+export type Row = Current & { path: string; stamp: number };
+
 export type WriteOutcome =
   | { outcome: 'written'; version: string; created: boolean }
   | { outcome: 'precondition-failed' }
@@ -126,6 +129,47 @@ export class VersionStore {
       .map((row) => row.path);
   }
 
+  /** The newest stamp in this epoch, or 0 before its first write. */
+  newestStamp(): number {
+    return this.#sql.exec<{ stamp: number | null }>('SELECT MAX(stamp) AS stamp FROM Versions').one().stamp ?? 0;
+  }
+
+  /**
+   * Whether A can still say what changed after `stamp`. A prune keeps each live resource's newest
+   * row, so only a dropped deletion loses a change, and the horizon is the newest one dropped. It
+   * costs a read and no write.
+   */
+  keepsEverythingAfter(stamp: number): boolean {
+    return stamp >= this.#horizon();
+  }
+
+  /**
+   * Each path's newest row, if it is stamped after `stamp`, deletions included, in the order of
+   * those stamps, for the paths `covers` accepts, up to `limit`.
+   */
+  changedAfter(stamp: number, covers: (path: string) => boolean, limit: number): Row[] {
+    return this.#rows(
+      `SELECT path, stamp, contents, deleted FROM Versions AS v
+       WHERE stamp > ? AND stamp = (SELECT MAX(stamp) FROM Versions WHERE path = v.path)
+       ORDER BY stamp`,
+      stamp,
+      covers,
+      limit,
+    );
+  }
+
+  /** Each live resource after `afterPath`, in path order, for the paths `covers` accepts, up to `limit`. */
+  liveAfter(afterPath: string, covers: (path: string) => boolean, limit: number): Row[] {
+    return this.#rows(
+      `SELECT path, stamp, contents, deleted FROM Versions AS v
+       WHERE path > ? AND deleted = 0 AND stamp = (SELECT MAX(stamp) FROM Versions WHERE path = v.path)
+       ORDER BY path`,
+      afterPath,
+      covers,
+      limit,
+    );
+  }
+
   /**
    * Empties the store and raises the epoch, as a Wipe does. The epoch survives, so no version
    * minted after is one minted before.
@@ -136,6 +180,17 @@ export class VersionStore {
     this.#sql.exec('DELETE FROM Horizon');
     this.#sql.exec('INSERT OR REPLACE INTO Epoch (id, value) VALUES (1, ?)', epoch);
     return epoch;
+  }
+
+  #rows(query: string, from: string | number, covers: (path: string) => boolean, limit: number): Row[] {
+    const rows: Row[] = [];
+    for (const row of this.#sql.exec<VersionRow & { path: string }>(query, from)) {
+      if (!covers(row.path)) continue;
+      const version = this.#version(row.stamp);
+      rows.push(row.deleted ? { path: row.path, stamp: row.stamp, version, deleted: true } : { path: row.path, stamp: row.stamp, version, deleted: false, contents: row.contents! });
+      if (rows.length === limit) break;
+    }
+    return rows;
   }
 
   #live(path: string): Current | undefined {

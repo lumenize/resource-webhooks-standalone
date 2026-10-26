@@ -40,7 +40,9 @@
     // How many verification POSTs one host may receive in a burst, refilled one a minute.
     "VERIFICATION_BURST": "10",
     // How often a client pings B on its socket. B treats a socket two intervals quiet as closed.
-    "HEARTBEAT_MS": "30000"
+    "HEARTBEAT_MS": "30000",
+    // How many changes one result for a collection carries at most, after which it sets hasMore.
+    "PAGE_SIZE": "100"
   },
   // The version each object runs, which it tells the page, since a deploy reaches each object late.
   "version_metadata": { "binding": "VERSION" },

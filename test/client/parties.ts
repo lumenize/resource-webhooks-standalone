@@ -4,6 +4,7 @@
 // `a` and `b` is its own OAuth client of A, so each is its own principal.
 import { expect, vi } from 'vitest';
 import { createMcpClient, OAuthSession, type McpClient } from '../../src/client/mcp-client';
+import type { Target } from '../../src/client/copies';
 import type { ResourceWebhookSubscribeResult } from '../../src/resource-webhooks-types';
 import { newSecret } from '../../src/standard-webhooks';
 
@@ -120,8 +121,8 @@ export interface Listener {
   hookUrl: string;
   /** The events B passed down, with each one's parsed body. */
   deliveries(): { subscriptionId: string; webhookId: string; body: Record<string, unknown> }[];
-  /** Calls `listener` with each delivery's parsed body and webhook-id as it arrives. */
-  onDelivery(listener: (body: Record<string, unknown>, webhookId: string) => void): void;
+  /** Calls `listener` with each delivery's parsed body, webhook-id and subscription id as it arrives. */
+  onDelivery(listener: (body: Record<string, unknown>, meta: { webhookId: string; subscriptionId: string }) => void): void;
   /** Registers another secret on the socket, and waits for B's acknowledgement. */
   register(secret: string): Promise<void>;
   /** Stops the heartbeat, as a sleeping laptop does, and leaves the socket open. */
@@ -139,13 +140,15 @@ export async function listen(tier: Tier, party: Party, { secret = newSecret(), t
   expect(socket.protocol).toBe('rw.1');
   const messages: Record<string, unknown>[] = [];
   const closes: { code: number; reason: string }[] = [];
-  const watchers: ((body: Record<string, unknown>, webhookId: string) => void)[] = [];
+  const watchers: ((body: Record<string, unknown>, meta: { webhookId: string; subscriptionId: string }) => void)[] = [];
   socket.onMessage((data) => {
     // The runtime answers a ping with a bare pong, which is not JSON.
     if (data === 'pong') return;
     const message = JSON.parse(data) as Record<string, unknown>;
     messages.push(message);
-    if (message.type === 'delivery') for (const watcher of watchers) watcher(JSON.parse(message.body as string), message.webhookId as string);
+    if (message.type !== 'delivery') return;
+    const meta = { webhookId: message.webhookId as string, subscriptionId: message.subscriptionId as string };
+    for (const watcher of watchers) watcher(JSON.parse(message.body as string), meta);
   });
   const heartbeat = setInterval(() => socket.send('ping'), tier.heartbeatMs);
   const close = () => {
@@ -192,7 +195,12 @@ export async function listen(tier: Tier, party: Party, { secret = newSecret(), t
 
 /** `b`'s level 2 subscription to one resource, or its refresh. */
 export function subscribeResource(party: Party, uri: string, url: string, secret: string, extra: Record<string, unknown> = {}) {
-  return party.client.request<ResourceWebhookSubscribeResult>('resources/webhooks/subscribe', { uri, delivery: { url, secret }, ttlMs: 3_600_000, ...extra });
+  return subscribeTarget(party, { uri }, url, secret, extra);
+}
+
+/** `b`'s level 2 subscription to any target, a collection's among them, or its refresh. */
+export function subscribeTarget(party: Party, target: Target, url: string, secret: string, extra: Record<string, unknown> = {}) {
+  return party.client.request<ResourceWebhookSubscribeResult>('resources/webhooks/subscribe', { ...target, delivery: { url, secret }, ttlMs: 3_600_000, ...extra });
 }
 
 /** `b`'s subscription to one resource at level 1. */

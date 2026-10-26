@@ -59,6 +59,7 @@ export class Server extends DurableObject<Env> {
       waitUntil: (promise) => ctx.waitUntil(promise),
       retrySchedule: () => (ctx.storage.kv.get('retrySchedule') as number[] | undefined) ?? env.RETRY_SCHEDULE_MS.split(',').map(Number),
       verificationBurst: Number(env.VERIFICATION_BURST),
+      pageSize: Number(env.PAGE_SIZE),
       subscriptionIdKey: env.SUBSCRIPTION_ID_KEY,
       maxTtlMs: Number(env.SUBSCRIPTION_TTL_MS),
       subscriptionCap: Number(env.SUBSCRIPTION_CAP),
