@@ -637,13 +637,14 @@ describe("A's deliveries", () => {
 });
 
 describe("The page's controls", () => {
-  it('greets each page with the version of the code its object runs', async () => {
+  it("greets each page with the version of the code its object runs, and B's with its heartbeat", async () => {
     expect(env.VERSION.id).toMatch(/^[0-9a-f-]{8,}$/);
     const lane = newLane();
     for (const party of ['A', 'B'] as const) {
       const page = await watch(lane, party);
       await vi.waitFor(() => expect(page.raw.length).toBeGreaterThan(0));
-      expect(JSON.parse(page.raw[0])).toEqual({ party, kind: 'hello', version: env.VERSION.id });
+      const settings = party === 'B' ? { heartbeatMs: Number(env.HEARTBEAT_MS) } : {};
+      expect(JSON.parse(page.raw[0])).toEqual({ party, kind: 'hello', version: env.VERSION.id, ...settings });
     }
   });
 

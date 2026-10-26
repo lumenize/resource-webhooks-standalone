@@ -8,11 +8,11 @@ const encoder = new TextEncoder();
 export const FRESHNESS_SECONDS = 5 * 60;
 
 /** The secret's key bytes, or undefined unless it is `whsec_` and the base64 of 24 to 64 bytes. */
-export function secretBytes(secret: string): Uint8Array | undefined {
+export function secretBytes(secret: string): Uint8Array<ArrayBuffer> | undefined {
   if (!secret.startsWith('whsec_')) return undefined;
   const encoded = secret.slice('whsec_'.length);
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return undefined;
-  let bytes: Uint8Array;
+  let bytes: Uint8Array<ArrayBuffer>;
   try {
     bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
   } catch {
@@ -26,7 +26,7 @@ export function newSecret(): string {
   return `whsec_${btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))}`;
 }
 
-function importKey(bytes: Uint8Array): Promise<CryptoKey> {
+function importKey(bytes: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
 }
 

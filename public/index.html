@@ -4,9 +4,67 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Resource webhooks</title>
+  <link rel="stylesheet" href="/page.css">
+  <script type="module" src="/js/page/page.js"></script>
 </head>
 <body>
-  <h1>Resource webhooks</h1>
-  <p>An MCP client subscribes to a resource and hears about its changes by webhook.</p>
+  <header>
+    <h1>Resource webhooks</h1>
+    <p>An MCP client subscribes to a resource and hears about its changes by webhook.</p>
+    <div class="controls">
+      <label>Operator token <input name="operator-token" type="password" autocomplete="off"></label>
+      <button data-action="wipe">Wipe</button>
+      <label>A's retry delays, ms <input name="schedule" value="2000,4000,8000"></label>
+      <button data-action="schedule">Set</button>
+      <button data-action="schedule-default">Default</button>
+      <output data-control-answer></output>
+    </div>
+  </header>
+  <main>
+    <section class="box" data-party="a">
+      <h2><code>a</code>, the writer</h2>
+      <div class="controls">
+        <label>Path under A <input name="a-path" value="notes/inbox/note-42"></label>
+        <label>Title <input name="a-title" value="Buy milk"></label>
+        <button data-action="a-write">Write</button>
+        <button data-action="a-delete">Delete</button>
+      </div>
+      <h3>Holds</h3>
+      <ul class="holds"></ul>
+      <h3>Messages</h3>
+      <ol class="messages"></ol>
+    </section>
+    <section class="box" data-party="A">
+      <h2>A, the server</h2>
+      <h3>Holds</h3>
+      <ul class="holds"></ul>
+      <h3>Messages</h3>
+      <ol class="messages"></ol>
+    </section>
+    <section class="box" data-party="B">
+      <h2>B, the gateway</h2>
+      <h3>Holds</h3>
+      <ul class="holds"></ul>
+      <h3>Messages</h3>
+      <ol class="messages"></ol>
+    </section>
+    <section class="box" data-party="b">
+      <h2><code>b</code>, the client</h2>
+      <div class="controls">
+        <label>Path under A <input name="b-path" value="notes/inbox/note-42"></label>
+        <button data-action="b-read">Read</button>
+        <button data-action="b-get">GET</button>
+        <button data-action="b-get-if-changed">GET if changed</button>
+        <button data-action="b-subscribe-event">Subscribe to its event</button>
+        <button data-action="b-subscribe">Subscribe or refresh</button>
+        <button data-action="b-sleep">Sleep</button>
+        <button data-action="b-wake">Wake</button>
+      </div>
+      <h3>Holds</h3>
+      <ul class="holds"></ul>
+      <h3>Messages</h3>
+      <ol class="messages"></ol>
+    </section>
+  </main>
 </body>
 </html>

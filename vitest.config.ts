@@ -44,6 +44,17 @@ export default defineConfig({
             },
           ]
         : []),
+      // The demo page in Chromium, at the origin wrangler dev serves it from over https.
+      {
+        test: {
+          name: 'browser',
+          environment: 'node',
+          include: ['test/browser/**/*.test.ts'],
+          globalSetup: ['./test/browser/global-setup.ts'],
+          testTimeout: 120_000,
+          hookTimeout: 90_000,
+        },
+      },
       // Node tests: the Worker under wrangler's test harness, with its static assets, and the
       // repo's own scripts.
       {

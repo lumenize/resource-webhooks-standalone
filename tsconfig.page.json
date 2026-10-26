@@ -1,0 +1,13 @@
+{
+  // The demo page's script, compiled for the browser into the Worker's static assets.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "public/js",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": [],
+  "files": ["src/page/page.ts"]
+}

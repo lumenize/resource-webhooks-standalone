@@ -1,0 +1,60 @@
+:root {
+  color-scheme: light dark;
+  --line: #8884;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+}
+
+header h1 {
+  margin: 0 0 4px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+main {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.box {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-width: 0;
+}
+
+.box h2 {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+
+.box h3 {
+  margin: 8px 0 2px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
+.holds,
+.messages {
+  margin: 0;
+  padding-left: 20px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.messages {
+  max-height: 50vh;
+  overflow-y: auto;
+}

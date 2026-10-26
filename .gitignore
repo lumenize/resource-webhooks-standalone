@@ -9,3 +9,5 @@ coverage
 .DS_Store
 .claude/settings.local.json
 results/
+.certs/
+public/js/

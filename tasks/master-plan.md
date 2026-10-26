@@ -935,7 +935,7 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
      - A `listed` target covers the lists as well as the inbox, and a write to an archived note is not delivered on it. Mutation: list every note.
      - R39 goes unexercised, since everyone may read A's notes, and the phase says so rather than building a revocation to trigger it.
 8. **The demo page's mechanics.** **Mechanics pinned, staging exploratory:** the details beyond the rehearsed beats wait for Larry's rehearsal after the build.
-   - **Builds:** the page, served from the Worker's static assets with `Content-Security-Policy: script-src 'self'`, rendering every value as text; the four boxes, fed by the back channel; `a` and `b` running in the browser on `mcp-client.ts`, with `b`'s OAuth, PKCE and `client_secret` kept in `sessionStorage`; the buttons for phase 4's controls, with the operator token typed in, kept in `sessionStorage` and never in the URL; and the control that stops `b`'s pings without closing its socket. It runs under `wrangler dev --local-protocol https` with a mkcert certificate and `NODE_EXTRA_CA_CERTS` naming mkcert's root, so A's POST to its own origin verifies, and the browser lane of `../lumenize/.claude/rules/testing.md` § *Real-browser tests*.
+   - **Builds:** the page, served from the Worker's static assets with `Content-Security-Policy: script-src 'self'`, rendering every value as text; the four boxes, fed by the back channel; `a` and `b` running in the browser on `mcp-client.ts`, each signing in through a hidden frame, so its PKCE verifier and `client_secret` stay in memory; the buttons for phase 4's controls, with the operator token typed in, kept in `sessionStorage` and never in the URL; and the control that stops `b`'s pings without closing its socket. It runs under `wrangler dev --local-protocol https` with a mkcert certificate and `NODE_EXTRA_CA_CERTS` naming mkcert's root, so A's POST to its own origin verifies, and Playwright drives Chromium from Node at the Worker's own origin, as `../lumenize/.claude/rules/testing.md` § *Real-browser tests* asks.
    - **Success criteria:**
      - A real-browser test, with the page where production serves it, drives beats 1 to 13 and checks each box after each beat. Mutation: drop a back-channel report.
      - A note titled `<img src=x onerror=…>` shows as text and runs nothing. Mutation: render with `innerHTML`.
@@ -1207,3 +1207,27 @@ Each phase ends with its criteria passing in the vitest-plugin lane against one 
 **Close-out.**
 
 - **Phase 6's interim is gone:** a folder, a template or `listed` no longer answers `Unsupported`.
+
+### Phase 8
+
+**For Larry.**
+
+- **The page signs `a` and `b` in through a hidden frame, not a redirect of the whole page,** so their PKCE verifiers and client secrets stay in memory and `sessionStorage` holds only the operator token. The plan put them in `sessionStorage`, which a redirect of the whole page would need, since it unloads the page mid-flow. A frame keeps the page, its boxes and its back channels alive, and A sends the frame back to `/callback`, a page of the same origin whose URL carries the code. A reload signs both in afresh.
+- **The browser test uses `playwright` alone, not `@vitest/browser-playwright` as well.** It drives Chromium from a Node test, which opens the page at the Worker's own origin, where production serves it. Vitest's browser mode would run the test inside a page of its own on another origin, which needs a proxy to reach the Worker's.
+- **mkcert's CA lives in the repo's gitignored `.certs` folder, which the browser test's setup creates, and is never installed in macOS's trust store.** Workerd trusts it through `NODE_EXTRA_CA_CERTS`, and the test tells Chromium to accept the certificate. Installing it changes a system security setting, which I left to you. To open the local page in your own browser without a warning, run `CAROOT=.certs/ca mkcert -install`.
+- **The page's controls and layout are mechanics only,** as the phase planned. One button per action, every message as one line of text, and A's and B's holdings read off their reports. Its staging waits for your rehearsal, and I asked no questions about it.
+
+**Retro.**
+
+- **Measured, as the phase's exploratory part:** under `wrangler dev --local-protocol https`, A's handshake and its deliveries to its own origin work with `NODE_EXTRA_CA_CERTS` naming mkcert's CA. Without it they fail with "The callback endpoint could not be reached", so workerd verifies the certificate and the extra CA is what it trusts. `global_fetch_strictly_public` does not refuse `localhost` there. Level 2's deployed scenarios passed against the local Worker this way before the page existed.
+- **B's back-channel hello now carries its heartbeat,** so the page's `b` pings on it.
+- **The page compiles with `tsc` into `public/js`, which is gitignored, by wrangler's build command,** which runs before every dev run and deploy and under wrangler's test harness, but not in the vitest-plugin lanes, which serve no assets. The page imports `mcp-client.ts`, `copies.ts` and `standard-webhooks.ts` unchanged, since each imports nothing but types. The DOM's crypto types needed `standard-webhooks.ts`'s byte arrays typed as `Uint8Array<ArrayBuffer>`.
+- **A's refusal of a client a Wipe made it forget comes back to the frame as a page,** so the page reads its JSON and throws the session's own `OAuthError`, which sends the session to register again.
+- **The browser test is one narrative of beats 1 to 13,** with a check of every box after each beat, then a title written as HTML, and the operator token's handling. Its first failures were the test's own: B passes on A's handshake for each new subscription, `b`'s log cut a catch-up's result short, and at the Wipe `b`'s old socket closing redrew its holdings with the old client id.
+- **A heartbeat mutation first survived, since the beats run faster than two heartbeats.** Beat 6, the narration, now waits out three heartbeats and checks B still finds `b`'s socket alive.
+- **12 mutations, 11 caught by the test aimed at them on the first run,** among them dropping a back-channel report, rendering with `innerHTML`, and keeping the epoch.
+- **The full suite passes, 324 tests, the browser lane's three more than phase 7 left,** both type-checks pass, both conformance gates still exit 0 at their baselines, and the deployed tier passes its five files. The deployed test Worker serves the page with its policy, its script and `/callback`.
+
+**Close-out.**
+
+- **The placeholder page from phase 1 is gone.**

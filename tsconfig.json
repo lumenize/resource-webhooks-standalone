@@ -11,5 +11,7 @@
     "noEmit": true,
     "types": ["@cloudflare/vitest-plugin/types"]
   },
-  "include": ["src", "test", "worker-configuration.d.ts"]
+  "include": ["src", "test", "worker-configuration.d.ts"],
+  // The page runs in a browser, and tsconfig.page.json compiles it with the DOM's types.
+  "exclude": ["src/page"]
 }
